@@ -48,6 +48,7 @@ Open the **⚙** tab (press `4`, or click it):
 
 | Row | Choices |
 |---|---|
+| Theme | auto · mocha · latte · terminal |
 | Owl | night · barn · snowy · lilac · off |
 | Style | powerline · rounded · plain |
 | Plan workflow | on · off |
@@ -57,12 +58,26 @@ Press `o` beside the owl to cycle its colours. Your choices are kept across sess
 
 Commands do the same: `/pulse`, `/pulse report`, `/pulse reset`, `/pulse style <powerline|rounded|plain>`, `/pulse owl <night|barn|snowy|lilac|off>`.
 
+## What installs, and what doesn't
+
+**Included in the one install line:** the whole Pulse pane, the owl in all four colourways, the Settings tab, the plan workflow, and the Catppuccin theme. With nothing else installed, the pane draws in Catppuccin Mocha. Switch to Latte or your terminal's own colours under ⚙ Settings → THEME.
+
+**Optional extras, installed separately:**
+
+- **The skins mod**, for Catppuccin across the rest of Claude Code (tool rows, code, tables), not just this pane. With THEME on `auto`, the pane then follows your `/skin`, including Latte on light backgrounds.
+  ```
+  /plugin install skins --marketplace hellosverre/claude-skins
+  /skin catppuccin
+  ```
+- **A Nerd Font** (for example JetBrainsMono Nerd Font from [nerdfonts.com](https://www.nerdfonts.com)), set as your terminal's font, for the powerline arrows. Without one, choose STYLE `plain`.
+- **A status line** at the bottom of the screen is your own Claude Code setting (`/statusline`). This plugin doesn't change it.
+
+A plugin can't install fonts or edit your settings, and making skins a required dependency would stop this plugin loading for anyone who can't get it, so these stay optional.
+
 ## Requirements
 
-- **Claude Code** with function-hook mods (the plugin API this uses is early access; update Claude Code if the pane doesn't appear).
-- **A Nerd Font** for the powerline arrows. Without one, choose the `plain` style.
+- **Claude Code** with function-hook mods (the plugin API this uses is early access; run `claude update` if the pane doesn't appear).
 - **A truecolor terminal** for the owl and colours (VS Code, Windows Terminal, iTerm2, kitty, Ghostty, WezTerm).
-- **Optional:** the [skins](https://github.com/hellosverre) mod. With `/skin catppuccin`, the pane uses Catppuccin Mocha on dark backgrounds and Latte on light ones. Without it, the pane uses your theme's colours.
 
 ## Privacy
 

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface, Register } from 'claude-code'
 
-import type { PulseEventKind, PulsePhase, PulsePlan, PulsePrefs, PulseStats, PulseStyle, PulseView } from '../types'
+import type { PulseEventKind, PulsePhase, PulsePlan, PulsePrefs, PulseStats, PulseStyle, PulseTheme, PulseView } from '../types'
 import { OWL_COLORWAYS, OWL_COLUMNS, OWL_ROWS, OWLS, owlCells } from './owl'
 import type { OwlMood } from './owl'
 
@@ -72,7 +72,7 @@ const fresh = (now: number): PulseStats => ({
 
 const stats = atom({ plugin: 'skill-pulse', key: 'stats' } as const, fresh(0))
 const view = atom({ plugin: 'skill-pulse', key: 'view' } as const, 'overview' as PulseView)
-const DEFAULT_PREFS: PulsePrefs = { style: 'powerline', owl: true, owlColor: 'night', planFlow: true }
+const DEFAULT_PREFS: PulsePrefs = { style: 'powerline', owl: true, owlColor: 'night', planFlow: true, theme: 'auto' }
 const prefs = atom({ plugin: 'skill-pulse', key: 'prefs' } as const, DEFAULT_PREFS)
 
 type Dollar = EngineInterface
@@ -224,17 +224,25 @@ function segsWidth(list: Seg[]): number {
   return list.reduce((n, s) => n + s.text.length + 2, 0) + caps
 }
 
-async function paletteFor($: Dollar): Promise<Palette> {
+/**
+ * The person's chosen theme; `auto` follows the skins mod's /skin where skins is installed
+ * (Catppuccin in its light or dark flavour, the terminal's own colours for any other skin),
+ * and is Catppuccin Mocha where it is not, so the pane looks finished with nothing else installed.
+ */
+async function paletteFor($: Dollar, theme: PulseTheme): Promise<Palette> {
+  if (theme === 'mocha') return MOCHA
+  if (theme === 'latte') return LATTE
+  if (theme === 'terminal') return THEMED
   try {
-    const prefs = (await $.state.get({ plugin: 'skins', key: 'prefs' } as never)) as { value?: { skin?: string } }
+    const skins = (await $.state.get({ plugin: 'skins', key: 'prefs' } as never)) as { value?: { skin?: string } } | undefined
+    const skin = skins?.value?.skin
+    if (skin === undefined) return MOCHA
     const custom = (await $.state.get({ plugin: 'skins', key: 'custom' } as never)) as { value?: Record<string, { base?: string }> }
     const light = (await $.state.get({ plugin: 'skins', key: 'isLight' } as never)) as { value?: boolean }
-    const skin = prefs?.value?.skin
-    const base = skin && custom?.value?.[skin]?.base
-    if (skin === 'catppuccin' || base === 'catppuccin') return light?.value ? LATTE : MOCHA
+    if (skin === 'catppuccin' || custom?.value?.[skin]?.base === 'catppuccin') return light?.value ? LATTE : MOCHA
     return THEMED
   } catch {
-    return THEMED
+    return MOCHA
   }
 }
 
@@ -551,6 +559,12 @@ function Settings(ui: UI, $: Dollar, p: PulsePrefs) {
   return (
     <Box flexDirection="column" marginTop={1}>
       {Section(ui, '⚙ SETTINGS', 'press a choice (click, or Tab then Enter) · kept for every session', P.accent)}
+      {row('THEME', [
+        choice('theme-auto', 'auto', p.theme === 'auto', { theme: 'auto' }),
+        choice('theme-mocha', 'mocha', p.theme === 'mocha', { theme: 'mocha' }, [MOCHA.accent, MOCHA.skill, MOCHA.tool]),
+        choice('theme-latte', 'latte', p.theme === 'latte', { theme: 'latte' }, [LATTE.accent, LATTE.skill, LATTE.tool]),
+        choice('theme-terminal', 'terminal', p.theme === 'terminal', { theme: 'terminal' }),
+      ])}
       {row('OWL', [
         ...OWL_COLORWAYS.map(c => {
           const o = OWLS[c][tone]
@@ -578,7 +592,9 @@ function Settings(ui: UI, $: Dollar, p: PulsePrefs) {
         </Button>,
       ])}
       <Box marginTop={1}>
-        <Text color={P.muted}>Colours follow your /skin: Catppuccin Mocha on dark, Latte on light. Press o by the owl to cycle its colours.</Text>
+        <Text color={P.muted}>
+          auto: Catppuccin Mocha, or your /skin when the skins mod is installed · terminal: your terminal's own colours · press o by the owl to cycle its colours
+        </Text>
       </Box>
     </Box>
   )
@@ -1340,10 +1356,10 @@ export const register: Register = on => {
     const ui = table as unknown as UI
     const Raster = e.surface === 'terminal' ? (table as Elements['terminal']).Raster : undefined
     const { Box, Text } = ui
-    const palette = await paletteFor($)
+    const p = await read($, prefs)
+    const palette = await paletteFor($, p.theme)
     const s = await read($, stats)
     const v = await read($, view)
-    const p = await read($, prefs)
     P = palette
     STYLE = p.style
     const W = Math.max(36, e.props.bodyColumns)

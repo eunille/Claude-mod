@@ -185,6 +185,20 @@ test('with the plan workflow off, a plan is tracked but nothing waits', async ($
   await ui.unmount()
 })
 
+test('the theme row defaults to auto and switches palettes', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+
+  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'v-settings' })
+  expect(await ui.find({ type: 'Text', text: /● auto/ })).toBeDefined()
+  await ui.press({ key: 'theme-latte' })
+  expect(await ui.find({ type: 'Text', text: /● latte/ })).toBeDefined()
+  await ui.press({ key: 'theme-terminal' })
+  expect(await ui.find({ type: 'Text', text: /● terminal/ })).toBeDefined()
+  await ui.unmount()
+})
+
 test('"good" approves a waiting plan', async ($, on) => {
   mock.clock(on)
   mock.store(on)

@@ -57,8 +57,10 @@ export type PulseStats = {
 /** powerline: chevron segments (Nerd Font); rounded: pills; plain: no special glyphs. */
 export type PulseStyle = 'powerline' | 'rounded' | 'plain'
 export type PulseOwlColor = 'night' | 'barn' | 'snowy' | 'lilac'
+/** auto: follow the skins mod's /skin when it is installed, Catppuccin Mocha when it is not. */
+export type PulseTheme = 'auto' | 'mocha' | 'latte' | 'terminal'
 /** planFlow: whether multi-step tasks wait for a plan's approval (the rule, the edit block). */
-export type PulsePrefs = { style: PulseStyle; owl: boolean; owlColor: PulseOwlColor; planFlow: boolean }
+export type PulsePrefs = { style: PulseStyle; owl: boolean; owlColor: PulseOwlColor; planFlow: boolean; theme: PulseTheme }
 
 declare module 'claude-code' {
   interface PluginState {
