@@ -2,14 +2,9 @@
 
 A live **Pulse** pane for Claude Code. It shows what Claude is doing while it works, including which skills and tools it uses, plus a plan-first workflow where Claude waits for your approval before it executes.
 
-```
- ▄▄    ▄▄      ◉ PULSE  ⠹ working  ◷ 12m  ↻ 7 turns  $0.42
- ████████      1: Overview  2: Tools  3: Timeline  4: ⚙
- ▀▀▀▀▀▀▀▀
- owl moods     CONTEXT  ████████████░░░░░░░░  43%  86k / 200k
-               TOKENS   in 312k out 18k cache 91% hit
-               ACTIVITY ▁▁▂▅▇█▃▁▁▂▃▅  42 calls / 8m
-```
+<img width="697" height="761" alt="image" src="https://github.com/user-attachments/assets/b35d3d40-497d-49c9-a80d-cbaa10a82070" />
+
+
 
 ## Install
 
