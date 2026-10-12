@@ -185,6 +185,23 @@ test('with the plan workflow off, a plan is tracked but nothing waits', async ($
   await ui.unmount()
 })
 
+test('bars are pixel-art segments with an icon cap, and NOW shows the last event', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+
+  await $.tool.call({ tool: 'Read', file_path: 'C:/repo/a.ts' })
+  await $.tool.call({ tool: 'Bash', command: 'npm test' })
+
+  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /^•$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /▰/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /NOW/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Bash {2}npm test/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /█{6,}/ })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('the theme row defaults to auto and switches palettes', async ($, on) => {
   mock.clock(on)
   mock.store(on)

@@ -405,23 +405,25 @@ async function approvePlan($: Dollar): Promise<void> {
 
 // ── formatting ───────────────────────────────────────────────────────────────
 
-const PARTS = ['', '▏', '▎', '▍', '▌', '▋', '▊', '▉']
 const SPARK = '▁▂▃▄▅▆▇█'
 const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 
-function bar(v: number, max: number, w: number): string {
-  if (max <= 0 || w <= 0) return ' '.repeat(Math.max(0, w))
-  const cells = Math.min(w, (v / max) * w)
-  const full = Math.floor(cells)
-  const part = full < w ? PARTS[Math.floor((cells - full) * 8)] : ''
-  return ('█'.repeat(full) + part).padEnd(w)
+/**
+ * A pixel-art bar, as a game draws health or mana: an icon cap, ▰ segments for the share filled,
+ * ▱ for the rest, and a pointed tip that lights up when full. Takes `segments + 2` cells.
+ */
+function pix(ui: UI, value: number, max: number, segments: number, color: string, icon: string): any[] {
+  const { Text } = ui
+  const n = Math.max(1, Math.round(segments))
+  const share = max > 0 ? value / max : 0
+  const filled = value > 0 ? Math.min(n, Math.max(1, Math.round(share * n))) : 0
+  return [
+    <Text color={color}>{icon}</Text>,
+    <Text color={color}>{'▰'.repeat(filled)}</Text>,
+    <Text color={P.surface}>{'▱'.repeat(n - filled)}</Text>,
+    <Text color={filled === n ? color : P.surface}>{STYLE === 'plain' ? '▸' : ARROW}</Text>,
+  ]
 }
-
-function meter(pct: number, w: number): [string, string] {
-  const filled = Math.max(0, Math.min(w, Math.round((pct / 100) * w)))
-  return ['█'.repeat(filled), '░'.repeat(w - filled)]
-}
-
 
 /** A sparkline whose bars warm with their height (P.heat), one Text per run of a colour. */
 function heatSpark(ui: UI, values: number[], w: number): any[] {
@@ -622,19 +624,33 @@ function Nav(ui: UI, $: Dollar, v: PulseView, W: number) {
 
 function Gauges(ui: UI, s: PulseStats, W: number) {
   const { Box, Text } = ui
-  const mw = Math.max(10, Math.min(40, W - 34))
+  const mw = Math.max(10, Math.min(24, W - 36))
   const t = s.tokens
   const input = t.input + t.cacheRead + t.cacheWrite
   const hit = input > 0 ? Math.round((t.cacheRead / input) * 100) : undefined
   const calls = s.activity.reduce((a, b) => a + b, 0)
   const sw = Math.max(8, Math.min(BUCKETS, W - 30))
+  const running = s.running[s.running.length - 1]
+  const last = s.timeline[s.timeline.length - 1]
+  const frame = SPINNER[Math.floor(s.now / TICK_MS) % SPINNER.length] ?? '•'
   return (
     <Box flexDirection="column">
+      <Text wrap="truncate-end">
+        <Text bold>{'NOW      '}</Text>
+        {running
+          ? [
+              <Text color={P.ok}>{`${frame} `}</Text>,
+              <Text bold>{running.tool}</Text>,
+              <Text color={P.muted}>{`${running.label ? `  ${running.label}` : ''} · ${dur(s.now - running.startedAt)}`}</Text>,
+            ]
+          : last
+            ? [<Text color={kindColor(last.kind)}>{`${GLYPH[last.kind]} `}</Text>, <Text color={P.muted}>{`${last.text} · ${ago(s, last.at)}`}</Text>]
+            : [<Text color={P.muted}>waiting for the first prompt</Text>]}
+      </Text>
       {s.contextPercent !== undefined ? (
         <Text wrap="truncate-end">
           <Text bold>{'CONTEXT  '}</Text>
-          <Text color={pctColor(s.contextPercent)}>{meter(s.contextPercent, mw)[0]}</Text>
-          <Text color={P.muted}>{meter(s.contextPercent, mw)[1]}</Text>
+          {pix(ui, s.contextPercent, 100, mw, pctColor(s.contextPercent), '◆')}
           <Text color={pctColor(s.contextPercent)} bold>
             {` ${String(s.contextPercent).padStart(3)}%`}
           </Text>
@@ -652,9 +668,9 @@ function Gauges(ui: UI, s: PulseStats, W: number) {
           {s.limits.map(l => (
             <Text>
               <Text color={P.muted}>{`${limitLabel(l.kind)} `}</Text>
-              <Text color={pctColor(l.percentUsed)}>{meter(l.percentUsed, 8)[0]}</Text>
-              <Text color={P.muted}>{meter(l.percentUsed, 8)[1]}</Text>
-              <Text>{` ${Math.round(l.percentUsed)}%   `}</Text>
+              {pix(ui, l.percentUsed, 100, 8, pctColor(l.percentUsed), '⧗')}
+              <Text bold>{` ${Math.round(l.percentUsed)}%`}</Text>
+              <Text>{'   '}</Text>
             </Text>
           ))}
         </Text>
@@ -722,7 +738,7 @@ function Skills(ui: UI, s: PulseStats, W: number) {
   const latest = rows[0]?.[0]
   const nw = Math.min(26, Math.max(8, ...rows.map(([n]) => n.length)))
   const max = Math.max(1, ...rows.map(([, v]) => v.count))
-  const bw = Math.max(4, Math.min(24, W - nw - 30))
+  const bw = Math.max(4, Math.min(14, W - nw - 34))
   return (
     <Box flexDirection="column" marginTop={1}>
       {Section(ui, 'SKILLS', rows.length ? `${rows.length} used this session` : 'none yet', P.skill)}
@@ -730,7 +746,7 @@ function Skills(ui: UI, s: PulseStats, W: number) {
       {rows.slice(0, 8).map(([name, v]) => (
         <Text wrap="truncate-end">
           <Text color={name === latest ? P.skill : P.fg} bold={name === latest}>{`  ${clip(name, nw)} `}</Text>
-          <Text color={P.skill}>{bar(v.count, max, bw)}</Text>
+          {pix(ui, v.count, max, bw, P.skill, '✦')}
           <Text bold>{` ${String(v.count).padStart(3)}`}</Text>
           <Text color={P.muted}>{`  ${ago(s, v.lastAt).padEnd(10)} all-time ${s.allTimeSkills[name] ?? v.count}`}</Text>
           {name === latest ? <Text color={P.skill}> ◀ latest</Text> : ''}
@@ -748,16 +764,16 @@ function Tools(ui: UI, s: PulseStats, W: number, limit: number) {
   const errors = rows.reduce((n, [, t]) => n + t.errors, 0)
   const nw = Math.min(22, Math.max(6, ...rows.map(([n]) => n.length)))
   const max = Math.max(1, ...rows.map(([, t]) => t.count))
-  const bw = Math.max(4, Math.min(30, W - nw - 32))
+  const bw = Math.max(4, Math.min(16, W - nw - 34))
   const note = total ? `${total} calls · ${bySub} by subagents · ${errors} errors` : 'none yet'
   return (
     <Box flexDirection="column" marginTop={1}>
       {Section(ui, 'TOOLS', note, P.tool)}
-      {rows.length > 0 && <Text color={P.muted}>{`  ${''.padEnd(nw)} ${''.padEnd(bw)} calls  err     avg     max`}</Text>}
+      {rows.length > 0 && <Text color={P.muted}>{`  ${''.padEnd(nw)} ${''.padEnd(bw + 2)} calls  err     avg     max`}</Text>}
       {rows.slice(0, limit).map(([name, t]) => (
         <Text wrap="truncate-end">
           <Text>{`  ${clip(name.replace(/^mcp__/, ''), nw)} `}</Text>
-          <Text color={P.tool}>{bar(t.count, max, bw)}</Text>
+          {pix(ui, t.count, max, bw, P.tool, '•')}
           <Text bold>{` ${String(t.count).padStart(5)}`}</Text>
           <Text color={t.errors ? P.err : P.muted}>{` ${String(t.errors).padStart(4)}`}</Text>
           <Text color={P.muted}>{` ${dur(t.count ? t.totalMs / t.count : 0).padStart(7)} ${dur(t.maxMs).padStart(7)}`}</Text>
@@ -775,14 +791,14 @@ function Agents(ui: UI, s: PulseStats, W: number) {
   const spawned = rows.reduce((n, [, c]) => n + c, 0)
   const max = Math.max(1, ...rows.map(([, c]) => c))
   const nw = Math.min(24, Math.max(6, ...rows.map(([n]) => n.length)))
-  const bw = Math.max(4, Math.min(20, W - nw - 12))
+  const bw = Math.max(4, Math.min(14, W - nw - 14))
   return (
     <Box flexDirection="column" marginTop={1}>
       {Section(ui, 'SUBAGENTS', `${spawned} spawned · ${s.agentsDone} finished · ${s.liveAgents.length} running`, P.agent)}
       {rows.map(([type, c]) => (
         <Text wrap="truncate-end">
           <Text>{`  ${clip(type, nw)} `}</Text>
-          <Text color={P.agent}>{bar(c, max, bw)}</Text>
+          {pix(ui, c, max, bw, P.agent, '◈')}
           <Text bold>{` ${c}`}</Text>
         </Text>
       ))}
@@ -802,7 +818,7 @@ function Files(ui: UI, s: PulseStats, W: number) {
       {rows.slice(0, 10).map(([path, f]) => (
         <Text wrap="truncate-end">
           <Text>{`  ${clip(shortPath(path), nw)} `}</Text>
-          <Text color={P.file}>{bar(f.reads + f.edits, max, 12)}</Text>
+          {pix(ui, f.reads + f.edits, max, 10, P.file, '▤')}
           <Text color={P.muted}>{`  read ${f.reads} · edit ${f.edits}`}</Text>
         </Text>
       ))}
@@ -885,7 +901,6 @@ function Plan(ui: UI, $: Dollar, s: PulseStats, W: number) {
     cancelled: { text: 'cancelled', color: P.muted },
   }[plan.status]
   const nw = Math.max(12, Math.min(44, W - 36))
-  const [filled, empty] = meter(pct, 14)
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text wrap="truncate-end">
@@ -897,8 +912,7 @@ function Plan(ui: UI, $: Dollar, s: PulseStats, W: number) {
       {Stepper(ui, plan.phases, frame ?? '•', W)}
       <Text wrap="truncate-end">
         <Text>{'  '}</Text>
-        <Text color={plan.status === 'done' ? P.ok : P.plan}>{filled}</Text>
-        <Text color={P.muted}>{empty}</Text>
+        {pix(ui, done, total, Math.min(14, Math.max(total * 2, 6)), plan.status === 'done' ? P.ok : P.plan, '▤')}
         <Text bold>{` ${pct}%`}</Text>
         <Text color={P.muted}>{`  new tokens: planning ${num(plan.planTokens ?? 0)} · phases ${num(spent)}${plan.revisions ? ` · ${plan.revisions} revision${plan.revisions > 1 ? 's' : ''}` : ''}`}</Text>
       </Text>
@@ -967,7 +981,7 @@ function Legend(ui: UI) {
         ))}
         <Text color={P.muted}>{'activity '}</Text>
         {P.heat.slice(1).map(c => (
-          <Text color={c}>█</Text>
+          <Text color={c}>▰</Text>
         ))}
         <Text color={P.muted}> busier</Text>
       </Text>
