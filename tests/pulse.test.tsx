@@ -1,0 +1,209 @@
+import { expect, mock, test } from 'claude-code/testing'
+
+const PANE = {
+  component: 'Pane',
+  requestId: 'skill-pulse',
+  props: {
+    title: 'Pulse',
+    isFocused: true,
+    bodyColumns: 100,
+    placement: 'dock',
+    scroll: { offset: 0, bodyRows: 40 },
+    view: {},
+  },
+} as const
+
+test('counts skills and tool calls and draws them on every surface', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+  on('skill.prompt', ($, e) => ({ text: e.text }))
+
+  await $.skill.prompt({ skill: 'dataviz', text: 'charts' })
+  await $.tool.call({ tool: 'Read', file_path: 'C:/repo/src/app/page.tsx' })
+  await $.tool.call({ tool: 'Read', file_path: 'C:/repo/src/app/page.tsx' })
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'skill-pulse', surface, ...PANE })
+    expect(await ui.find({ type: 'Text', text: /dataviz/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /2 calls/ })).toBeDefined()
+
+    await ui.press({ key: 'v-tools' })
+    expect(await ui.find({ type: 'Text', text: /HOT FILES/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /read 2/ })).toBeDefined()
+
+    await ui.press({ key: 'v-timeline' })
+    expect(await ui.find({ type: 'Text', text: /skill loaded {2}dataviz/ })).toBeDefined()
+
+    await ui.press({ key: 'v-overview' })
+    await ui.unmount()
+  }
+})
+
+const PLAN = 'mcp__skill-pulse__plan'
+const RUN = { command: 'pulse', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as const
+
+test('a plan waits for approval, then tracks its phases', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+  on('prompt.submit', ($, e) => ({ text: e.text, context: e.context }))
+
+  await $.tool.call({ tool: PLAN, action: 'propose', title: 'Add pagination', phases: ['Read the table', 'Add the API param', 'Build the UI'] })
+
+  const early = await $.tool.call({ tool: PLAN, action: 'start', phase: 1 })
+  expect(early.deny).toBeDefined()
+  const edit = await $.tool.call({ tool: 'Edit', file_path: 'C:/repo/a.ts', old_string: 'a', new_string: 'b' })
+  expect(edit.deny).toBeDefined()
+
+  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /awaiting your approval/ })).toBeDefined()
+  expect(await ui.find({ key: 'plan-approve' })).toBeDefined()
+
+  const approved = await $.prompt.submit({ text: 'yes', wait: false, origin: { kind: 'composer' } })
+  expect(approved.context?.some(c => c.includes('approved the plan'))).toBe(true)
+
+  expect((await $.tool.call({ tool: PLAN, action: 'start', phase: 1 })).deny).toBeUndefined()
+  expect((await $.tool.call({ tool: 'Edit', file_path: 'C:/repo/a.ts', old_string: 'a', new_string: 'b' })).deny).toBeUndefined()
+  await $.tool.call({ tool: PLAN, action: 'start', phase: 2 })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: /executing 1\/3/ })).toBeDefined()
+
+  await $.tool.call({ tool: PLAN, action: 'done', phase: 2 })
+  await $.tool.call({ tool: PLAN, action: 'done', phase: 3 })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: /done in/ })).toBeDefined()
+  expect(await ui.find({ key: 'plan-clear' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the owl and the bars draw on the terminal, the owl stays off the desktop', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+
+  await $.tool.call({ tool: PLAN, action: 'propose', title: 'Owl test', phases: ['One', 'Two', 'Three'] })
+
+  const term = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  expect(await term.find({ key: 'owl' })).toBeDefined()
+  expect(await term.find({ type: 'Text', text: /hoo\? approve/ })).toBeDefined()
+  expect(await term.find({ type: 'Text', text: /PULSE/ })).toBeDefined()
+  expect(await term.find({ type: 'Text', text: /○ 1 One/ })).toBeDefined()
+  expect(await term.find({ type: 'Text', text: /busier/ })).toBeDefined()
+  await term.unmount()
+
+  const desk = await $.ui.mount({ plugin: 'skill-pulse', surface: 'desktop', ...PANE })
+  expect(await desk.find({ key: 'owl' })).toBeUndefined()
+  expect(await desk.find({ type: 'Text', text: /PULSE/ })).toBeDefined()
+  await desk.unmount()
+})
+
+test('style and owl commands change the drawing and are kept', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+
+  expect((await $.command.run({ ...RUN, args: 'style plain' })).text).toContain('plain')
+  expect((await $.command.run({ ...RUN, args: 'owl off' })).text).toContain('off')
+  expect((await $.command.run({ ...RUN, args: 'style neon' })).text).toContain('Style is plain')
+
+  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  expect(await ui.find({ key: 'owl' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: // })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the Settings tab and the owl button change colours and style', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+
+  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /◂ night ▸/ })).toBeDefined()
+  await ui.press({ key: 'owl-cycle' })
+  expect(await ui.find({ type: 'Text', text: /◂ barn ▸/ })).toBeDefined()
+
+  await ui.press({ key: 'v-settings' })
+  expect(await ui.find({ type: 'Text', text: /● barn/ })).toBeDefined()
+  await ui.press({ key: 'owl-snowy' })
+  expect(await ui.find({ type: 'Text', text: /● snowy/ })).toBeDefined()
+  await ui.press({ key: 'style-rounded' })
+  expect(await ui.find({ type: 'Text', text: /● rounded/ })).toBeDefined()
+  await ui.press({ key: 'owl-off' })
+  expect(await ui.find({ key: 'owl' })).toBeUndefined()
+  expect((await $.command.run({ ...RUN, args: 'owl lilac' })).text).toContain('lilac')
+  await ui.unmount()
+})
+
+test('pressing Approve in the pane approves the plan', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+  on('prompt.submit', ($, e) => ({ text: e.text, context: e.context }))
+
+  await $.tool.call({ tool: PLAN, action: 'propose', title: 'Button test', phases: ['One', 'Two'] })
+  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'plan-approve' })
+  expect((await $.tool.call({ tool: PLAN, action: 'start', phase: 1 })).deny).toBeUndefined()
+  await ui.unmount()
+})
+
+test('errors lose their tags and the stepper never cuts a word', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', ($, e) =>
+    e.tool === 'Read' ? { deny: '<tool_use_error>File has not been read yet.</tool_use_error>' } : { result: { ok: true } },
+  )
+
+  await $.tool.call({ tool: 'Read', file_path: 'C:/repo/missing.ts' })
+  await $.tool.call({
+    tool: PLAN,
+    action: 'propose',
+    title: 'Long names',
+    phases: ['Add owl colourways night barn snowy and lilac', 'Add a Settings tab with pill buttons', 'Make the caption a button', 'Update tests and validate'],
+  })
+
+  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE, props: { ...PANE.props, bodyColumns: 70 } })
+  expect(await ui.find({ type: 'Text', text: /File has not been read yet/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /tool_use_error/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /○ 1 Add owl/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /○ 1 Add owl col…/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('with the plan workflow off, a plan is tracked but nothing waits', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+
+  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'v-settings' })
+  await ui.press({ key: 'plan-off' })
+  expect(await ui.find({ type: 'Text', text: /● off/ })).toBeDefined()
+
+  await $.tool.call({ tool: PLAN, action: 'propose', title: 'Free run', phases: ['One', 'Two'] })
+  expect((await $.tool.call({ tool: 'Edit', file_path: 'C:/repo/a.ts', old_string: 'a', new_string: 'b' })).deny).toBeUndefined()
+  expect((await $.tool.call({ tool: PLAN, action: 'start', phase: 1 })).deny).toBeUndefined()
+  await ui.unmount()
+})
+
+test('"good" approves a waiting plan', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+  on('prompt.submit', ($, e) => ({ text: e.text, context: e.context }))
+
+  await $.tool.call({ tool: PLAN, action: 'propose', title: 'Words', phases: ['One'] })
+  await $.prompt.submit({ text: 'good', wait: false, origin: { kind: 'composer' } })
+  expect((await $.tool.call({ tool: PLAN, action: 'start', phase: 1 })).deny).toBeUndefined()
+})
+
+test('an answer with changes keeps the plan waiting', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+  on('prompt.submit', ($, e) => ({ text: e.text, context: e.context }))
+
+  await $.tool.call({ tool: PLAN, action: 'propose', title: 'Refactor', phases: ['One', 'Two'] })
+  const reply = await $.prompt.submit({ text: 'yes but split phase two', wait: false, origin: { kind: 'composer' } })
+  expect(reply.context?.some(c => c.includes('approved the plan')) ?? false).toBe(false)
+  expect((await $.tool.call({ tool: PLAN, action: 'start', phase: 1 })).deny).toBeDefined()
+})

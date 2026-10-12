@@ -1,0 +1,12 @@
+{
+  "name": "eunille-mods",
+  "owner": { "name": "eunille", "url": "https://github.com/eunille" },
+  "description": "Mods for Claude Code by eunille: skill-pulse, a live monitor pane with a plan-approval workflow.",
+  "plugins": [
+    {
+      "name": "skill-pulse",
+      "source": "./",
+      "description": "Live Pulse pane: skills, tools, subagents, context, tokens, an owl mascot and a plan-first workflow."
+    }
+  ]
+}
