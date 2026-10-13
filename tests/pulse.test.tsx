@@ -1,5 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
+import { OWLS, owlCells, STILL } from '../hooks/owl'
+
 const PANE = {
   component: 'Pane',
   requestId: 'skill-pulse',
@@ -70,6 +72,7 @@ test('a plan waits for approval, then tracks its phases', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /executing 1\/3/ })).toBeDefined()
 
   await $.tool.call({ tool: PLAN, action: 'done', phase: 2 })
+  await $.tool.call({ tool: 'Bash', command: 'npm test' })
   await $.tool.call({ tool: PLAN, action: 'done', phase: 3 })
   await ui.redraw()
   expect(await ui.find({ type: 'Text', text: /done in/ })).toBeDefined()
@@ -266,6 +269,68 @@ test('a finished plan stays until the next prompt, then clears', async ($, on) =
   expect(await ui.find({ type: 'Text', text: /done in/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Multi-step tasks get a phased plan/ })).toBeDefined()
   await ui.unmount()
+})
+
+test('finishing waits once for checks after the last change, and the Plans tab keeps the history', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+  on('prompt.submit', ($, e) => ({ text: e.text, context: e.context }))
+  const edit = (path: string) => $.tool.call({ tool: 'Edit', file_path: path, old_string: 'a', new_string: 'b' })
+
+  await $.tool.call({ tool: PLAN, action: 'propose', title: 'Checked job', phases: ['Change it'] })
+  await $.prompt.submit({ text: 'yes', wait: false, origin: { kind: 'composer' } })
+  await $.tool.call({ tool: PLAN, action: 'start', phase: 1 })
+  await edit('C:/repo/src/a.ts')
+
+  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'v-plans' })
+  expect(await ui.find({ type: 'Text', text: /src\/a\.ts/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /not run since the last change/ })).toBeDefined()
+
+  expect((await $.tool.call({ tool: PLAN, action: 'done', phase: 1 })).deny).toContain('checks')
+  await $.tool.call({ tool: 'PowerShell', command: 'npx tsc -p tsconfig.json' })
+  expect((await $.tool.call({ tool: PLAN, action: 'done', phase: 1 })).deny).toBeUndefined()
+
+  await $.prompt.submit({ text: 'thanks', wait: false, origin: { kind: 'composer' } })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: /PAST PLANS/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Checked job/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('an unchecked finish goes through when repeated', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+  on('prompt.submit', ($, e) => ({ text: e.text, context: e.context }))
+
+  await $.tool.call({ tool: PLAN, action: 'propose', title: 'Docs', phases: ['Write it'] })
+  await $.prompt.submit({ text: 'yes', wait: false, origin: { kind: 'composer' } })
+  await $.tool.call({ tool: PLAN, action: 'start', phase: 1 })
+  await $.tool.call({ tool: 'Write', file_path: 'C:/repo/README.md', content: 'x' })
+  expect((await $.tool.call({ tool: PLAN, action: 'done', phase: 1 })).deny).toBeDefined()
+  expect((await $.tool.call({ tool: PLAN, action: 'done', phase: 1 })).deny).toBeUndefined()
+})
+
+test('shell writes count as edits, discarded output does not', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+
+  expect((await $.tool.call({ tool: 'Bash', command: 'ls src 2>/dev/null' })).deny).toBeUndefined()
+  expect((await $.tool.call({ tool: 'PowerShell', command: 'Get-ChildItem 2>$null' })).deny).toBeUndefined()
+  expect((await $.tool.call({ tool: 'Bash', command: 'echo hi > notes.txt' })).deny).toBeUndefined()
+  expect((await $.tool.call({ tool: 'Bash', command: "sed -i 's/a/b/' src/a.ts" })).deny).toContain('propose')
+})
+
+test('the owl moves between poses', () => {
+  const colors = OWLS.night.dark
+  const still = owlCells('look', colors)
+  expect(owlCells('look', colors, { ...STILL, dy: 2 })).not.toBe(still)
+  expect(owlCells('look', colors, { ...STILL, dx: 0 })).not.toBe(still)
+  expect(owlCells('look', colors, { ...STILL, isFlap: true })).not.toBe(still)
+  expect(owlCells('look', colors, { ...STILL, isTwitch: true })).not.toBe(still)
 })
 
 test('an answer with changes keeps the plan waiting', async ($, on) => {

@@ -2,8 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface, Register } from 'claude-code'
 
 import type { PulseEventKind, PulsePhase, PulsePlan, PulsePrefs, PulseStats, PulseStyle, PulseTheme, PulseView } from '../types'
-import { OWL_COLORWAYS, OWL_COLUMNS, OWL_ROWS, OWLS, owlCells } from './owl'
-import type { OwlMood } from './owl'
+import { OWL_COLORWAYS, OWL_COLUMNS, OWL_ROWS, OWLS, owlCells, STILL } from './owl'
+import type { OwlMood, OwlPose } from './owl'
 
 const PANE = 'skill-pulse'
 const TITLE = 'Pulse'
@@ -11,11 +11,20 @@ const PLAN_TOOL = 'mcp__skill-pulse__plan'
 const BUCKET_MS = 10_000
 const BUCKETS = 48
 const TICK_MS = 2_000
-const USAGE_EVERY_TICKS = 5
 const TIMELINE_MAX = 80
 const LOOP_REPEATS = 3
 const POLLING_TOOLS = new Set(['TaskOutput', 'BashOutput', 'Monitor', 'TaskList', 'TaskGet'])
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit'])
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
+// ponytail: a pattern, not a parser; it misses writes done by scripts and catches a few harmless redirects.
+const SHELL_WRITE =
+  /\bsed\s+-i|\btee\b|\b(?:rm|mv|cp|touch|mkdir)\s|\b(?:Set-Content|Add-Content|Out-File|New-Item|Remove-Item|Move-Item|Copy-Item|Rename-Item)\b|(?:^|[^\d&>])>{1,2}\s*[^\s&|>]/i
+const SHELL_DISCARD = /\d?>{1,2}\s*(?:\/dev\/null|\$null|nul\b|&\d)/gi
+const CHECK =
+  /\b(?:(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+(?:test|lint|typecheck|check|build)|vitest|jest|pytest|tsc|eslint|biome|mypy|ruff|cargo\s+(?:test|check|clippy)|go\s+(?:test|vet)|plugin\s+(?:test|validate)|dotnet\s+test|mvn\s+test|gradlew?\s+test)\b/i
+const HISTORY_MAX = 20
+const FRAME_MS = 500
+const USAGE_EVERY_MS = 10_000
 const APPROVE = /^(y|yes|yep|yeah|ok|okay|sure|approve|approved|go|go ahead|proceed|continue|lgtm|ship it|do it|good|great|perfect|nice|sounds good|looks good)\b/i
 const HEDGE = /\b(but|change|instead|except|first|wait|no|not|don't|dont)\b/i
 const HELD =
@@ -25,6 +34,9 @@ const NUDGE =
   'Plan-first is on and this is the second file edit without a plan, so this task looks multi-step. ' +
   'Call the plan tool with action "propose" and ask "Approve this plan?" before editing. ' +
   'If it really is one small change, or the user asked to skip planning, repeat this call and it will go through.'
+const UNCHECKED =
+  'Files changed after the last passing test, typecheck or lint run. Run the project\'s checks now, fix what fails, then mark this phase done. ' +
+  'If this task has nothing to check (docs, config), repeat this call and it will go through.'
 
 const PLAN_RULE = `# Plan-first workflow (skill-pulse)
 When the user asks for a task that takes several steps (a feature, a refactor, changes across files, a multi-step fix), follow this before changing anything. Skip it for questions, explanations, quick lookups and one-line edits. Subagents ignore this section.
@@ -74,6 +86,7 @@ const fresh = (now: number): PulseStats => ({
   alertedContext: 0,
   unplannedEdits: 0,
   nudged: false,
+  history: [],
 })
 
 const stats = atom({ plugin: 'skill-pulse', key: 'stats' } as const, fresh(0))
@@ -335,6 +348,23 @@ function startPhase(phases: PulsePhase[], index: number, now: number): PulsePhas
   })
 }
 
+const commandOf = (tool: string, a: Record<string, unknown>) => (SHELL_TOOLS.has(tool) && typeof a.command === 'string' ? a.command : '')
+const isShellWrite = (tool: string, a: Record<string, unknown>) => SHELL_WRITE.test(commandOf(tool, a).replace(SHELL_DISCARD, ''))
+const isCheck = (tool: string, a: Record<string, unknown>) => CHECK.test(commandOf(tool, a))
+
+/** Ends the plan as done or cancelled and files it in the history, newest first. */
+function endPlan(s: PulseStats, status: 'done' | 'cancelled', now: number): PulseStats {
+  if (!s.plan) return s
+  const ended: PulsePlan = { ...s.plan, status, endedAt: s.plan.endedAt ?? now }
+  return { ...s, plan: ended, history: [ended, ...s.history].slice(0, HISTORY_MAX) }
+}
+
+async function saveHistory($: Dollar, s: PulseStats): Promise<void> {
+  try {
+    await $.store.set('history', s.history)
+  } catch {}
+}
+
 async function refreshUsage($: Dollar & { session: { usage: () => Promise<any> }; ui: { toast: (t: string) => void } }) {
   const u = await $.session.usage()
   let alert: string | undefined
@@ -510,20 +540,47 @@ function Header(ui: UI, s: PulseStats, W: number) {
   return Bar(ui, list)
 }
 
-/** What the owl shows: an error first, then a plan waiting, a plan just done, work, idleness. */
-function owlMood(s: PulseStats): { mood: OwlMood; caption: string; color: string } {
+/** Whether the owl has something to act out, and so redraws every FRAME_MS rather than every TICK_MS. */
+function isLively(s: PulseStats): boolean {
+  return (
+    s.isBusy ||
+    s.running.length > 0 ||
+    isOpen(s.plan) ||
+    (s.lastError !== undefined && s.now - s.lastError.at < 8_000) ||
+    (s.plan?.status === 'done' && s.now - (s.plan.endedAt ?? 0) < 60_000)
+  )
+}
+
+/**
+ * What the owl shows: an error first, then a plan waiting, a plan just done, work, idleness.
+ * Eyes change per mood; the pose moves the body: a shake, a twitch, a hop, a bob and flap, a breath.
+ */
+function owlMood(s: PulseStats): { mood: OwlMood; pose: OwlPose; caption: string; color: string } {
+  const f = Math.floor(s.now / FRAME_MS)
   const tick = Math.floor(s.now / TICK_MS)
   const lastAt = s.timeline[s.timeline.length - 1]?.at ?? s.startedAt
-  if (s.lastError && s.now - s.lastError.at < 8_000) return { mood: 'alarm', caption: '!! error', color: P.err }
-  if (isOpen(s.plan)) return { mood: 'curious', caption: 'hoo? approve', color: P.warn }
-  if (s.plan?.status === 'done' && s.now - (s.plan.endedAt ?? 0) < 60_000) return { mood: 'happy', caption: '✓ hoot!', color: P.ok }
-  if (s.isBusy || s.running.length > 0) {
-    const glance = (['look', 'glanceL', 'look', 'glanceR'] as const)[Math.floor(tick / 2) % 4] ?? 'look'
-    return { mood: tick % 7 === 0 ? 'blink' : glance, caption: 'working', color: P.ok }
+  if (s.lastError && s.now - s.lastError.at < 8_000) {
+    return { mood: 'alarm', pose: { ...STILL, dx: f % 2 ? 0 : 2, isFlap: f % 4 < 2 }, caption: '!! error', color: P.err }
   }
-  if (s.now - lastAt > 120_000) return { mood: 'sleep', caption: tick % 2 ? 'z Z z' : 'Z z Z', color: P.muted }
-  return { mood: tick % 9 === 0 ? 'blink' : 'sleepy', caption: 'idle', color: P.muted }
+  if (isOpen(s.plan)) {
+    return { mood: f % 12 < 2 ? 'blink' : 'curious', pose: { ...STILL, isTwitch: f % 6 === 0, dy: f % 6 === 3 ? 0 : 1 }, caption: 'hoo? approve', color: P.warn }
+  }
+  if (s.plan?.status === 'done' && s.now - (s.plan.endedAt ?? 0) < 60_000) {
+    // Hops for the first few seconds, then now and then.
+    const isHopping = s.now - (s.plan.endedAt ?? 0) < 4_000 || f % 8 < 2
+    const isUp = isHopping && f % 2 === 0
+    return { mood: 'happy', pose: { ...STILL, dy: isUp ? 0 : 2, isFlap: isUp }, caption: '✓ hoot!', color: P.ok }
+  }
+  if (s.isBusy || s.running.length > 0) {
+    const glance = (['look', 'glanceL', 'look', 'glanceR'] as const)[Math.floor(f / 4) % 4] ?? 'look'
+    return { mood: f % 14 === 0 ? 'blink' : glance, pose: { ...STILL, dy: f % 2 ? 1 : 2, isFlap: f % 4 === 1 }, caption: 'working', color: P.ok }
+  }
+  if (s.now - lastAt > 120_000) return { mood: 'sleep', pose: { ...STILL, dy: tick % 2 ? 1 : 2 }, caption: tick % 2 ? 'z Z z' : 'Z z Z', color: P.muted }
+  return { mood: tick % 9 === 0 ? 'blink' : 'sleepy', pose: { ...STILL, dy: tick % 4 === 0 ? 2 : 1, isTwitch: tick % 7 === 3 }, caption: 'idle', color: P.muted }
 }
+
+/** The owl's column: its canvas, a cell of air each side, and a row of air above. */
+const OWL_BOX = OWL_COLUMNS + 2
 
 type RasterElement = Elements['terminal']['Raster']
 
@@ -533,8 +590,8 @@ function Owl(ui: UI, $: Dollar, Raster: RasterElement, s: PulseStats, p: PulsePr
   const colors = OWLS[p.owlColor][P.isLight ? 'light' : 'dark']
   const next = OWL_COLORWAYS[(OWL_COLORWAYS.indexOf(p.owlColor) + 1) % OWL_COLORWAYS.length] ?? 'night'
   return (
-    <Box flexDirection="column" alignItems="center" width={OWL_COLUMNS}>
-      <Raster key="owl" columns={OWL_COLUMNS} rows={OWL_ROWS} cells={owlCells(m.mood, colors)} />
+    <Box flexDirection="column" alignItems="center" width={OWL_BOX} marginTop={1}>
+      <Raster key="owl" columns={OWL_COLUMNS} rows={OWL_ROWS} cells={owlCells(m.mood, colors, m.pose)} />
       <Text color={m.color} wrap="truncate-end">
         {m.caption}
       </Text>
@@ -594,7 +651,7 @@ function Settings(ui: UI, $: Dollar, p: PulsePrefs) {
           key="reset"
           plain
           hotkey="r"
-          onPress={() => update($, stats, s => ({ ...fresh(s.now), allTimeSkills: s.allTimeSkills, startedAt: s.startedAt, plan: s.plan }))}
+          onPress={() => update($, stats, s => ({ ...fresh(s.now), allTimeSkills: s.allTimeSkills, startedAt: s.startedAt, plan: s.plan, history: s.history }))}
         >
           {pill(ui, '↺ reset counters', P.surface, P.fg)}
         </Button>,
@@ -608,11 +665,11 @@ function Settings(ui: UI, $: Dollar, p: PulsePrefs) {
   )
 }
 
-/** Four tabs on one line: each takes `n: ` for its hotkey, its label and a pill's four cells. */
+/** Five tabs on one line: each takes `n: ` for its hotkey, its label and a pill's four cells. */
 function Nav(ui: UI, $: Dollar, v: PulseView, W: number) {
   const { Box, Button } = ui
   const go = (to: PulseView) => () => update($, view, () => to)
-  const labels = W >= 54 ? ['Overview', 'Tools', 'Timeline', '⚙'] : ['Main', 'Tools', 'Log', '⚙']
+  const labels = W >= 68 ? ['Overview', 'Tools', 'Plans', 'Timeline', '⚙'] : ['Main', 'Tools', 'Plan', 'Log', '⚙']
   const tab = (key: string, to: PulseView, label: string, hotkey: string) => (
     <Button key={key} plain hotkey={hotkey} onPress={go(to)}>
       {v === to ? pill(ui, label, P.accent) : pill(ui, label, P.surface, P.fg)}
@@ -622,8 +679,9 @@ function Nav(ui: UI, $: Dollar, v: PulseView, W: number) {
     <Box gap={1}>
       {tab('v-overview', 'overview', labels[0] ?? 'Overview', '1')}
       {tab('v-tools', 'tools', labels[1] ?? 'Tools', '2')}
-      {tab('v-timeline', 'timeline', labels[2] ?? 'Timeline', '3')}
-      {tab('v-settings', 'settings', labels[3] ?? '⚙', '4')}
+      {tab('v-plans', 'plans', labels[2] ?? 'Plans', '3')}
+      {tab('v-timeline', 'timeline', labels[3] ?? 'Timeline', '4')}
+      {tab('v-settings', 'settings', labels[4] ?? '⚙', '5')}
     </Box>
   )
 }
@@ -883,17 +941,26 @@ function Stepper(ui: UI, phases: PulsePhase[], frame: string, W: number) {
   )
 }
 
-function Plan(ui: UI, $: Dollar, s: PulseStats, W: number) {
+/** The plan: on the overview its bar and buttons, on the Plans tab every phase with what it changed and the checks. */
+function Plan(ui: UI, $: Dollar, s: PulseStats, W: number, isFull: boolean) {
   const { Box, Text, Button } = ui
   const plan = s.plan
   if (!plan) {
     return (
       <Box flexDirection="column" marginTop={1}>
-        {Section(ui, 'PLAN', 'none', P.plan)}
+        {Section(ui, 'PLAN', isFull ? 'none running' : 'none · press 3 for past plans', P.plan)}
         <Text color={P.muted}>  Multi-step tasks get a phased plan here; Claude waits for your approval before executing.</Text>
       </Box>
     )
   }
+  const checks =
+    plan.editedAt === undefined
+      ? { text: 'no files changed yet', color: P.muted }
+      : plan.checkedAt === undefined || plan.checkedAt < plan.editedAt
+        ? { text: '○ not run since the last change', color: P.warn }
+        : plan.isCheckOk
+          ? { text: `✓ passed ${ago(s, plan.checkedAt)}`, color: P.ok }
+          : { text: `✖ failed ${ago(s, plan.checkedAt)}`, color: P.err }
   const total = plan.phases.length
   const done = plan.phases.filter(p => p.status === 'done').length
   const pct = total ? Math.round((done / total) * 100) : 0
@@ -922,20 +989,33 @@ function Plan(ui: UI, $: Dollar, s: PulseStats, W: number) {
         <Text bold>{` ${pct}%`}</Text>
         <Text color={P.muted}>{`  new tokens: planning ${num(plan.planTokens ?? 0)} · phases ${num(spent)}${plan.revisions ? ` · ${plan.revisions} revision${plan.revisions > 1 ? 's' : ''}` : ''}`}</Text>
       </Text>
-      {plan.phases.map((p, i) => {
-        const glyph = p.status === 'done' ? '✓' : p.status === 'active' ? frame : '○'
-        const color = p.status === 'done' ? P.ok : p.status === 'active' ? P.plan : P.muted
-        const took = p.startedAt ? dur((p.endedAt ?? s.now) - p.startedAt) : ''
-        return (
-          <Text wrap="truncate-end">
-            <Text color={color}>{`  ${glyph} ${String(i + 1).padStart(2)} `}</Text>
-            <Text color={p.status === 'pending' ? P.muted : P.fg} bold={p.status === 'active'}>
-              {clip(p.name, nw)}
-            </Text>
-            <Text color={P.muted}>{` ${took.padStart(7)} ${(p.tokens ? `${num(p.tokens)} tok` : '').padStart(10)}`}</Text>
-          </Text>
-        )
-      })}
+      {isFull && (
+        <Text wrap="truncate-end">
+          <Text color={P.muted}>{'  checks  '}</Text>
+          <Text color={checks.color}>{checks.text}</Text>
+        </Text>
+      )}
+      {isFull &&
+        plan.phases.map((p, i) => {
+          const glyph = p.status === 'done' ? '✓' : p.status === 'active' ? frame : '○'
+          const color = p.status === 'done' ? P.ok : p.status === 'active' ? P.plan : P.muted
+          const took = p.startedAt ? dur((p.endedAt ?? s.now) - p.startedAt) : ''
+          return (
+            <Box flexDirection="column">
+              <Text wrap="truncate-end">
+                <Text color={color}>{`  ${glyph} ${String(i + 1).padStart(2)} `}</Text>
+                <Text color={p.status === 'pending' ? P.muted : P.fg} bold={p.status === 'active'}>
+                  {clip(p.name, nw)}
+                </Text>
+                <Text color={P.muted}>{` ${took.padStart(7)} ${(p.tokens ? `${num(p.tokens)} tok` : '').padStart(10)}`}</Text>
+              </Text>
+              {(p.files ?? []).slice(0, 6).map(f => (
+                <Text wrap="truncate-end" color={P.file}>{`        ▤ ${f.startsWith('$ ') ? f : shortPath(f)}`}</Text>
+              ))}
+              {(p.files?.length ?? 0) > 6 && <Text color={P.muted}>{`        +${(p.files?.length ?? 0) - 6} more`}</Text>}
+            </Box>
+          )
+        })}
       {isOpen(plan) && (
         <Box gap={1} marginTop={1} paddingLeft={2}>
           <Button key="plan-approve" plain hotkey="a" onPress={() => approvePlan($)}>
@@ -948,7 +1028,7 @@ function Plan(ui: UI, $: Dollar, s: PulseStats, W: number) {
             key="plan-cancel"
             plain
             hotkey="x"
-            onPress={() => update($, stats, st => (st.plan ? withEvent({ ...st, plan: { ...st.plan, status: 'cancelled' } }, 'plan', 'plan cancelled') : st))}
+            onPress={async () => saveHistory($, await update($, stats, st => (st.plan ? withEvent(endPlan(st, 'cancelled', st.now), 'plan', 'plan cancelled') : st)))}
           >
             {pill(ui, '✕ Cancel', P.surface, P.err)}
           </Button>
@@ -961,6 +1041,33 @@ function Plan(ui: UI, $: Dollar, s: PulseStats, W: number) {
           </Button>
         </Box>
       )}
+    </Box>
+  )
+}
+
+/** Past plans, newest first: how each ended, how long it ran, what it cost and whether its checks passed. */
+function History(ui: UI, s: PulseStats, W: number) {
+  const { Box, Text } = ui
+  const nw = Math.max(12, Math.min(40, W - 44))
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      {Section(ui, 'PAST PLANS', s.history.length ? `${s.history.length} kept across sessions` : 'none yet', P.plan)}
+      {s.history.map(past => {
+        const done = past.phases.filter(p => p.status === 'done').length
+        const files = new Set(past.phases.flatMap(p => p.files ?? [])).size
+        const tokens = past.planTokens + past.phases.reduce((n, p) => n + p.tokens, 0)
+        const took = past.endedAt ? dur(past.endedAt - (past.approvedAt ?? past.createdAt)) : ''
+        const check = past.editedAt === undefined ? '–' : past.isCheckOk && (past.checkedAt ?? 0) >= past.editedAt ? '✓' : '✖'
+        return (
+          <Text wrap="truncate-end">
+            <Text color={past.status === 'done' ? P.ok : P.muted}>{`  ${past.status === 'done' ? '✓' : '✕'} `}</Text>
+            <Text color={P.fg}>{clip(past.title, nw)}</Text>
+            <Text color={P.muted}>{` ${done}/${past.phases.length} · ${took.padStart(6)} · ${num(tokens).padStart(6)} tok · ${files} files · checks `}</Text>
+            <Text color={check === '✓' ? P.ok : check === '✖' ? P.err : P.muted}>{check}</Text>
+            <Text color={P.muted}>{`  ${new Date(past.createdAt).toLocaleDateString()} ${clock(past.createdAt).slice(0, 5)}`}</Text>
+          </Text>
+        )
+      })}
     </Box>
   )
 }
@@ -1039,7 +1146,6 @@ function report(s: PulseStats): string {
 // ── hooks ────────────────────────────────────────────────────────────────────
 
 export const register: Register = on => {
-  let ticks = 0
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -1054,19 +1160,28 @@ export const register: Register = on => {
     await $.tool.register({ name: 'plan', description: PLAN_TOOL_DESCRIPTION, inputSchema: PLAN_SCHEMA, isDeferred: false })
     const now = await $.clock.now()
     let allTime: Record<string, number> = {}
+    let history: PulsePlan[] = []
     try {
       allTime = ((await $.store.get('allTimeSkills')) ?? {}) as Record<string, number>
+      history = ((await $.store.get('history')) ?? []) as PulsePlan[]
     } catch {}
     // A value kept from an older version lacks the newer fields: fill them in.
-    await update($, stats, s => (s.startedAt === 0 ? { ...fresh(now), allTimeSkills: allTime } : roll({ ...fresh(now), ...s }, now)))
+    await update($, stats, s => (s.startedAt === 0 ? { ...fresh(now), allTimeSkills: allTime, history } : roll({ ...fresh(now), ...s, history: s.history ?? history }, now)))
 
-    $.clock.every(TICK_MS, () => {
+    // Every FRAME_MS while the owl has something to act out, every TICK_MS otherwise.
+    let lastDrawAt = 0
+    let lastUsageAt = 0
+    $.clock.every(FRAME_MS, () => {
       void (async () => {
         const t = await $.clock.now()
+        if (t - lastDrawAt < TICK_MS && !isLively(await read($, stats))) return
+        lastDrawAt = t
         const s = await update($, stats, prev => roll(prev, t))
         $.ui.status(statusText(s))
-        ticks += 1
-        if (ticks % USAGE_EVERY_TICKS === 0) await refreshUsage($)
+        if (t - lastUsageAt >= USAGE_EVERY_MS) {
+          lastUsageAt = t
+          await refreshUsage($)
+        }
       })().catch(() => {})
     })
     void refreshUsage($).catch(() => {})
@@ -1084,7 +1199,7 @@ export const register: Register = on => {
   on('command.run', { command: 'pulse' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase()
     if (arg === 'reset') {
-      await update($, stats, s => ({ ...fresh(s.now), allTimeSkills: s.allTimeSkills, startedAt: s.startedAt }))
+      await update($, stats, s => ({ ...fresh(s.now), allTimeSkills: s.allTimeSkills, startedAt: s.startedAt, plan: s.plan, history: s.history }))
       return { text: 'Pulse counters reset.' }
     }
     if (arg === 'report') return { text: report(await read($, stats)) }
@@ -1108,7 +1223,7 @@ export const register: Register = on => {
       return { text: word === 'style' ? `Pulse style: ${chosen.style}.` : chosen.owl ? `Pulse owl: ${chosen.owlColor} — hoo!` : 'Pulse owl off.' }
     }
     await $.ui.open({ id: PANE, title: TITLE })
-    return { text: 'Pulse monitor opened. Keys in the pane: 1 overview · 2 tools & files · 3 timeline · 4 settings · o owl colours · r reset · a approve plan.' }
+    return { text: 'Pulse monitor opened. Keys in the pane: 1 overview · 2 tools & files · 3 plans · 4 timeline · 5 settings · o owl colours · r reset · a approve plan.' }
   })
 
   // Each prompt resets the plan gate and drops a finished plan; an answer to a plan awaiting approval approves it, or marks it being revised.
@@ -1169,11 +1284,13 @@ export const register: Register = on => {
     })
     if (loop) $.ui.toast(`⚠ Possible loop: ${loop}`)
 
+    const isEdit = EDIT_TOOLS.has(tool) || isShellWrite(tool, args)
+    const ranCheck = isCheck(tool, args)
     let ran: Awaited<ReturnType<typeof next>> | undefined
     try {
       // File edits wait while a plan waits for approval; without any plan, the second edit of a prompt is turned back once.
       let deny: string | undefined
-      if (EDIT_TOOLS.has(tool) && !isSubagent && (await read($, prefs)).planFlow) {
+      if (isEdit && !isSubagent && (await read($, prefs)).planFlow) {
         await update($, stats, prev => {
           if (isOpen(prev.plan)) {
             deny = HELD
@@ -1197,8 +1314,22 @@ export const register: Register = on => {
       await update($, stats, prev => {
         const s = roll(prev, end)
         const t = s.tools[tool] ?? { count: 1, errors: 0, totalMs: 0, maxMs: 0, bySubagent: 0 }
+        // While a plan runs: what each phase changed, and when the checks last ran and how they went.
+        let plan = s.plan
+        if (plan?.status === 'executing' && !denied) {
+          if (isEdit && !isError) {
+            const what = file ?? `$ ${label.slice(0, 60)}`
+            plan = {
+              ...plan,
+              editedAt: end,
+              phases: plan.phases.map(p => (p.status === 'active' && !(p.files ?? []).includes(what) ? { ...p, files: [...(p.files ?? []), what] } : p)),
+            }
+          }
+          if (ranCheck) plan = { ...plan, checkedAt: end, isCheckOk: !isError }
+        }
         const updated: PulseStats = {
           ...s,
+          plan,
           running: s.running.filter(r => r.id !== e.tool_use_id),
           tools: { ...s.tools, [tool]: { ...t, errors: t.errors + (isError ? 1 : 0), totalMs: t.totalMs + ms, maxMs: Math.max(t.maxMs, ms) } },
         }
@@ -1252,10 +1383,8 @@ export const register: Register = on => {
     }
 
     if (action === 'cancel') {
-      if (!plan) return { result: 'No plan to cancel.' }
-      await update($, stats, prev =>
-        prev.plan ? withEvent({ ...roll(prev, now), plan: { ...prev.plan, status: 'cancelled', endedAt: now } }, 'plan', 'plan cancelled') : prev,
-      )
+      if (!plan || plan.status === 'done' || plan.status === 'cancelled') return { result: 'No plan to cancel.' }
+      await saveHistory($, await update($, stats, prev => (prev.plan ? withEvent(endPlan(roll(prev, now), 'cancelled', now), 'plan', 'plan cancelled') : prev)))
       return { result: 'Plan cancelled.' }
     }
 
@@ -1265,8 +1394,17 @@ export const register: Register = on => {
       const n = typeof a.phase === 'number' ? Math.floor(a.phase) : NaN
       if (!(n >= 1 && n <= plan.phases.length)) return { deny: `"phase" must be a number from 1 to ${plan.phases.length}.` }
       const name = plan.phases[n - 1]?.name ?? ''
+      // Finishing the last phase waits, once, for checks that ran after the last file change.
+      const isLast = action === 'done' && plan.phases.every((p, i) => i === n - 1 || p.status === 'done')
+      const isUnchecked = plan.editedAt !== undefined && !(plan.isCheckOk && (plan.checkedAt ?? 0) >= plan.editedAt)
+      if (isLast && isUnchecked && !plan.isDoneNudged) {
+        await update($, stats, prev =>
+          prev.plan ? withEvent({ ...roll(prev, now), plan: { ...prev.plan, isDoneNudged: true } }, 'plan', 'finish held — files changed since the last passing check') : prev,
+        )
+        return { deny: UNCHECKED }
+      }
       let isFinished = false
-      await update($, stats, prev => {
+      const s2 = await update($, stats, prev => {
         if (!prev.plan) return prev
         const st = roll(prev, now)
         const phases: PulsePhase[] =
@@ -1274,11 +1412,14 @@ export const register: Register = on => {
             ? startPhase(prev.plan.phases, n - 1, now)
             : prev.plan.phases.map((p, i) => (i === n - 1 ? { ...p, status: 'done', startedAt: p.startedAt ?? now, endedAt: now } : p))
         isFinished = phases.every(p => p.status === 'done')
-        const nextPlan: PulsePlan = { ...prev.plan, phases, status: isFinished ? 'done' : 'executing', endedAt: isFinished ? now : undefined }
         const text = action === 'start' ? `phase ${n} started · ${name}` : `phase ${n} done · ${name}${isFinished ? ' · plan complete' : ''}`
-        return withEvent({ ...st, plan: nextPlan }, 'plan', text)
+        const withPhases = { ...st, plan: { ...prev.plan, phases } }
+        return withEvent(isFinished ? endPlan(withPhases, 'done', now) : withPhases, 'plan', text)
       })
-      if (isFinished) $.ui.toast(`✓ Plan complete: ${plan.title}`)
+      if (isFinished) {
+        await saveHistory($, s2)
+        $.ui.toast(`✓ Plan complete: ${plan.title}`)
+      }
       return { result: action === 'start' ? `Phase ${n} started: ${name}` : `Phase ${n} done: ${name}${isFinished ? '. All phases are complete.' : ''}` }
     }
 
@@ -1401,11 +1542,11 @@ export const register: Register = on => {
     const isEmpty = s.timeline.length === 0
     const showOwl = p.owl && Raster !== undefined && W >= 60
     // The owl's column and the gap beside it.
-    const RW = showOwl ? W - OWL_COLUMNS - 2 : W
+    const RW = showOwl ? W - OWL_BOX - 3 : W
 
     return (
       <Box flexDirection="column" width={W}>
-        <Box flexDirection="row" gap={2}>
+        <Box flexDirection="row" gap={3}>
           {showOwl && Raster ? Owl(ui, $, Raster, s, p) : ''}
           <Box flexDirection="column" width={RW}>
             {Header(ui, s, RW)}
@@ -1426,8 +1567,14 @@ export const register: Register = on => {
             {Tools(ui, s, W, 6)}
             {Agents(ui, s, W)}
             {Insights(ui, s)}
-            {Plan(ui, $, s, W)}
+            {Plan(ui, $, s, W, false)}
             {Legend(ui)}
+          </Box>
+        )}
+        {v === 'plans' && (
+          <Box flexDirection="column">
+            {Plan(ui, $, s, W, true)}
+            {History(ui, s, W)}
           </Box>
         )}
         {v === 'tools' && (

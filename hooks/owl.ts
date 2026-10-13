@@ -1,5 +1,5 @@
-// The Pulse owl: 14×14 pixels drawn as 14×7 terminal cells, two pixels a cell (▀ / ▄),
-// its eyes swapped per mood. Letters name colours; '.' is the terminal's own background.
+// The Pulse owl: 14×14 pixels on a 16×16 canvas, drawn as 16×8 terminal cells, two pixels a cell (▀ / ▄),
+// its eyes swapped per mood and its body moved per pose. Letters name colours; '.' is the terminal's own background.
 
 import type { PulseOwlColor } from '../types'
 
@@ -176,8 +176,26 @@ const EYES: Record<OwlMood, [string, string, string, string]> = {
   happy: ['DD', 'FF', 'DD', 'FF'],
 }
 
-export const OWL_COLUMNS = 14
-export const OWL_ROWS = 7
+/** Rows 6-11 with the wings raised, for a flap or a hop. */
+const WINGS_UP = [
+  'LMFFFFKKFFFFML',
+  'LLMMMMKKMMMMLL',
+  'LLMRRRRRRRRMLL',
+  '.LMRRSRRSRRML.',
+  '..MRRRRRRRRM..',
+  '...MRRSSRRM...',
+]
+/** Row 0 with the ear tufts flicked outward. */
+const EARS_TWITCH = '.M..........M.'
+
+/** How the owl stands this frame: where in its canvas (1 is centred, 0 and 2 a pixel off), and whether wings and ears are up. */
+export type OwlPose = { dx: number; dy: number; isFlap: boolean; isTwitch: boolean }
+export const STILL: OwlPose = { dx: 1, dy: 1, isFlap: false, isTwitch: false }
+
+const SPRITE_SIZE = 14
+/** The canvas leaves a pixel round the 14×14 sprite, so it can bob, hop and shake without clipping. */
+export const OWL_COLUMNS = 16
+export const OWL_ROWS = 8
 
 const DEFAULT = 0x01000000
 const UPPER = 0x2580 // ▀
@@ -188,12 +206,22 @@ function rgb(hex: string): number {
   return Number.isNaN(n) ? DEFAULT : n
 }
 
-function pixels(mood: OwlMood): string[] {
+/** The sprite in a mood and pose, placed on the canvas: OWL_ROWS * 2 rows of OWL_COLUMNS pixels. */
+function pixels(mood: OwlMood, pose: OwlPose): string[] {
   const [l4, l5, r4, r5] = EYES[mood]
-  return SPRITE.map((row, y) => {
+  const sprite = SPRITE.map((row, y) => {
+    if (y === 0 && pose.isTwitch) return EARS_TWITCH
+    if (pose.isFlap && y >= 6 && y <= 11) return WINGS_UP[y - 6] ?? row
     if (y !== 4 && y !== 5) return row
     const [l, r] = y === 4 ? [l4, r4] : [l5, r5]
     return row.slice(0, 3) + l + row.slice(5, 9) + r + row.slice(11)
+  })
+  const dx = Math.max(0, Math.min(OWL_COLUMNS - SPRITE_SIZE, pose.dx))
+  const dy = Math.max(0, Math.min(OWL_ROWS * 2 - SPRITE_SIZE, pose.dy))
+  const blank = '.'.repeat(OWL_COLUMNS)
+  return Array.from({ length: OWL_ROWS * 2 }, (_, y) => {
+    const row = sprite[y - dy]
+    return row === undefined ? blank : '.'.repeat(dx) + row + '.'.repeat(OWL_COLUMNS - SPRITE_SIZE - dx)
   })
 }
 
@@ -211,8 +239,8 @@ function toBase64(bytes: Uint8Array): string {
   return out
 }
 
-/** The owl in a mood, as a Raster's `cells`. */
-export function owlCells(mood: OwlMood, colors: OwlColors): string {
+/** The owl in a mood and pose, as a Raster's `cells`. */
+export function owlCells(mood: OwlMood, colors: OwlColors, pose: OwlPose = STILL): string {
   const palette: Record<string, number> = {
     M: rgb(colors.body),
     L: rgb(colors.wing),
@@ -226,7 +254,7 @@ export function owlCells(mood: OwlMood, colors: OwlColors): string {
     Y: rgb(colors.feet),
     A: rgb(colors.alarm),
   }
-  const grid = pixels(mood)
+  const grid = pixels(mood, pose)
   const view = new DataView(new ArrayBuffer(OWL_COLUMNS * OWL_ROWS * 12))
   for (let row = 0; row < OWL_ROWS; row++) {
     for (let col = 0; col < OWL_COLUMNS; col++) {

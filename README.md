@@ -20,7 +20,7 @@ Answer `y` to add the marketplace, then pick a scope (user scope loads it in eve
 ## What it shows
 
 - **Header bar:** idle or working, uptime, turns and session cost.
-- **Owl:** a pixel-art owl whose face follows Claude. It glances around while working, gets sleepy when idle, looks up when a plan is waiting for you, shows red eyes on an error, and smiles when a plan finishes.
+- **Owl:** a pixel-art owl that acts out what Claude is doing. It bobs and flaps while working, twitches its ears when a plan is waiting for you, shakes with red eyes on an error, hops when a plan finishes, and breathes slowly when idle.
 - **Gauges:** context window, 5h and 7d rate limits, tokens and cache hit rate, and an activity sparkline that warms as Claude gets busier.
 - **Running now:** tool calls and subagents in progress, with elapsed time.
 - **Skills:** which skills loaded, how often and when, with all-time counts across sessions.
@@ -35,12 +35,15 @@ For multi-step tasks, Claude proposes a phased plan and waits for you before it 
 1. Claude analyzes the task and proposes 3 to 7 phases. They appear in the **PLAN** section with a stepper bar.
 2. File edits are blocked until you approve. Reply `yes` (or `ok`, `go`, `good`, `lgtm`), or press **a** in the pane.
 3. Claude runs every phase straight through, and the pane shows each phase's time and the new tokens it used.
+4. If files changed since the last passing test, typecheck or lint run, finishing the last phase is held once so Claude runs the checks first.
 
-Questions and one-line edits skip the plan step. You can turn the whole workflow off in ⚙ Settings.
+The **Plans** tab (press `3`) shows every phase with the files it changed and the state of the checks, plus your past plans, kept across sessions. A finished plan clears from the overview when you send your next prompt.
+
+Questions and one-line edits skip the plan step; a second file edit without a plan (including shell writes such as `sed -i` or `>`) is turned back once to ask for one. You can turn the whole workflow off in ⚙ Settings.
 
 ## Settings
 
-Open the **⚙** tab (press `4`, or click it):
+Open the **⚙** tab (press `5`, or click it):
 
 | Row | Choices |
 |---|---|

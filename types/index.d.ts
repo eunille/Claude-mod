@@ -6,11 +6,12 @@ export type PulseEventKind = 'skill' | 'tool' | 'agent' | 'error' | 'turn' | 'al
 export type PulseEvent = { at: number; kind: PulseEventKind; text: string }
 export type PulseTokens = { input: number; output: number; cacheRead: number; cacheWrite: number }
 export type PulseLimit = { kind: string; percentUsed: number }
-export type PulseView = 'overview' | 'tools' | 'timeline' | 'settings'
+export type PulseView = 'overview' | 'tools' | 'plans' | 'timeline' | 'settings'
 export type PulseAgent = { id: string; type: string; description: string; model: string; startedAt: number; calls: number }
 
 export type PulsePhaseStatus = 'pending' | 'active' | 'done'
-export type PulsePhase = { name: string; status: PulsePhaseStatus; startedAt?: number; endedAt?: number; tokens: number }
+/** files: what the phase changed, a path for a file tool and the command for a shell write. */
+export type PulsePhase = { name: string; status: PulsePhaseStatus; startedAt?: number; endedAt?: number; tokens: number; files?: string[] }
 /** awaiting: proposed, waiting for the person; revising: they answered with changes. */
 export type PulsePlanStatus = 'awaiting' | 'revising' | 'executing' | 'done' | 'cancelled'
 export type PulsePlan = {
@@ -22,6 +23,11 @@ export type PulsePlan = {
   endedAt?: number
   planTokens: number
   revisions: number
+  /** The last file change, the last test/typecheck/lint run and whether it passed, and whether finishing has been turned back for an unchecked change. */
+  editedAt?: number
+  checkedAt?: number
+  isCheckOk?: boolean
+  isDoneNudged?: boolean
 }
 
 export type PulseStats = {
@@ -55,6 +61,8 @@ export type PulseStats = {
   unplannedEdits: number
   nudged: boolean
   plan?: PulsePlan
+  /** Finished and cancelled plans, newest first, kept across sessions. */
+  history: PulsePlan[]
 }
 
 /** powerline: chevron segments (Nerd Font); rounded: pills; plain: no special glyphs. */
