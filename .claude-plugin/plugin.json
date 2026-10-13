@@ -1,6 +1,6 @@
 {
   "name": "skill-pulse",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "author": { "name": "eunille", "url": "https://github.com/eunille" },
   "description": "Live Pulse pane for Claude Code: skills, tools, subagents, context, tokens and activity, an owl that shows what Claude is doing, and a plan-first workflow that waits for your approval.",
   "homepage": "https://github.com/eunille/Claude-mod",

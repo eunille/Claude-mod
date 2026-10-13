@@ -249,6 +249,25 @@ test('a second edit with no plan is turned back once, then goes through', async 
   expect((await edit()).deny).toBeUndefined()
 })
 
+test('a finished plan stays until the next prompt, then clears', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+  on('prompt.submit', ($, e) => ({ text: e.text, context: e.context }))
+
+  await $.tool.call({ tool: PLAN, action: 'propose', title: 'Short job', phases: ['One'] })
+  await $.prompt.submit({ text: 'yes', wait: false, origin: { kind: 'composer' } })
+  await $.tool.call({ tool: PLAN, action: 'done', phase: 1 })
+
+  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /done in/ })).toBeDefined()
+  await $.prompt.submit({ text: 'something else', wait: false, origin: { kind: 'composer' } })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: /done in/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Multi-step tasks get a phased plan/ })).toBeDefined()
+  await ui.unmount()
+})
+
 test('an answer with changes keeps the plan waiting', async ($, on) => {
   mock.clock(on)
   mock.store(on)

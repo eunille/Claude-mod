@@ -1111,9 +1111,10 @@ export const register: Register = on => {
     return { text: 'Pulse monitor opened. Keys in the pane: 1 overview · 2 tools & files · 3 timeline · 4 settings · o owl colours · r reset · a approve plan.' }
   })
 
-  // An answer to a plan awaiting approval: approve it, or note that it is being revised.
+  // Each prompt resets the plan gate and drops a finished plan; an answer to a plan awaiting approval approves it, or marks it being revised.
   on('prompt.submit', async ($, e, next) => {
-    const s = await update($, stats, prev => ({ ...prev, unplannedEdits: 0, nudged: false }))
+    const isFinished = (plan: PulsePlan | undefined) => plan?.status === 'done' || plan?.status === 'cancelled'
+    const s = await update($, stats, prev => ({ ...prev, unplannedEdits: 0, nudged: false, plan: isFinished(prev.plan) ? undefined : prev.plan }))
     if (!isOpen(s.plan)) return next(e)
     const text = e.text.trim()
     const isApproval = text.length <= 40 && APPROVE.test(text) && !HEDGE.test(text)
