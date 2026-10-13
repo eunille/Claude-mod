@@ -2,8 +2,8 @@
 
 A live **Pulse** pane for Claude Code. It shows what Claude is doing while it works, including which skills and tools it uses, plus a plan-first workflow where Claude waits for your approval before it executes.
 
-<img width="697" height="761" alt="image" src="https://github.com/user-attachments/assets/b35d3d40-497d-49c9-a80d-cbaa10a82070" />
-<img width="682" height="747" alt="image" src="https://github.com/user-attachments/assets/91b2dcb7-4d9e-4533-8e4c-3c32c31e8a54" />
+<img width="693" height="626" alt="image" src="https://github.com/user-attachments/assets/7ec6d31a-133e-401d-8e09-90faa13a6852" />
+
 
 
 
