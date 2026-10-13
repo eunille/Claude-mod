@@ -191,7 +191,8 @@ function cube(fw: number, fh: number, d: number, p: Pose): Grid {
   })
 
   // The face. Eye gap and mouth width follow the front's parity so both stay centred.
-  const eh = fh >= 12 ? 3 : 2
+  // Eyes 2 pixels tall at terminal sizes; 3 only on a big face, where 2 would look small.
+  const eh = fh >= 15 ? 3 : 2
   // Narrow the gap (by 2, keeping it centred) until both eyes clear the outline and the crease.
   let gap = fw % 2 ? 3 : 4
   while (fw - 4 - gap < 2 && gap > 1) gap -= 2
