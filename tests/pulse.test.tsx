@@ -348,6 +348,13 @@ test('the mascot switches to Cubeman and back', async ($, on) => {
   await ui.redraw()
   expect(await ui.find({ key: 'owl' })).toBeDefined()
   expect(await ui.find({ key: 'cubeman' })).toBeUndefined()
+
+  // Picking an owl colour while Cubeman shows brings the owl back, in that colour.
+  await ui.press({ key: 'mascot-cubeman' })
+  expect(await ui.find({ type: 'Text', text: /● night/ })).toBeUndefined()
+  await ui.press({ key: 'owl-snowy' })
+  expect(await ui.find({ key: 'owl' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /● snowy/ })).toBeDefined()
   await ui.unmount()
 })
 

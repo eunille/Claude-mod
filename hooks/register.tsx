@@ -657,7 +657,7 @@ function Settings(ui: UI, $: Dollar, p: PulsePrefs) {
       {row('OWL', [
         ...OWL_COLORWAYS.map(c => {
           const o = OWLS[c][tone]
-          return choice(`owl-${c}`, c, p.owl && p.owlColor === c, { owl: true, owlColor: c }, [o.body, o.face, o.eye])
+          return choice(`owl-${c}`, c, p.owl && p.mascot !== 'cubeman' && p.owlColor === c, { owl: true, owlColor: c, mascot: 'owl' }, [o.body, o.face, o.eye])
         }),
         choice('owl-off', 'off', !p.owl, { owl: false }),
       ])}
@@ -1198,8 +1198,11 @@ export const register: Register = on => {
     $.clock.every(CUBE_FRAME_MS, () => {
       void (async () => {
         const t = await $.clock.now()
-        const interval = !isLively(await read($, stats)) ? TICK_MS : (await read($, prefs)).mascot === 'cubeman' ? CUBE_FRAME_MS : FRAME_MS
-        if (t - lastDrawAt < interval) return
+        const p = await read($, prefs)
+        const isCube = p.owl && p.mascot === 'cubeman'
+        const interval = !isLively(await read($, stats)) ? TICK_MS : isCube ? CUBE_FRAME_MS : FRAME_MS
+        // Half a tick of slack: the time is read after an await, so 499 ms must still count as 500.
+        if (t - lastDrawAt < interval - CUBE_FRAME_MS / 2) return
         lastDrawAt = t
         const s = await update($, stats, prev => roll(prev, t))
         $.ui.status(statusText(s))
@@ -1234,7 +1237,8 @@ export const register: Register = on => {
       const colorway = OWL_COLORWAYS.find(c => c === value)
       let change: Partial<PulsePrefs> | undefined
       if (word === 'style' && (value === 'powerline' || value === 'rounded' || value === 'plain')) change = { style: value }
-      if (word === 'owl' && (value === 'on' || value === 'off')) change = { owl: value === 'on' }
+      if (word === 'owl' && value === 'on') change = { owl: true, mascot: 'owl' }
+      if (word === 'owl' && value === 'off') change = { owl: false }
       if (word === 'owl' && colorway) change = { owl: true, owlColor: colorway, mascot: 'owl' }
       if (word === 'mascot' && (value === 'owl' || value === 'cubeman')) change = { owl: true, mascot: value as PulseMascot }
       if (word === 'mascot' && value === 'off') change = { owl: false }

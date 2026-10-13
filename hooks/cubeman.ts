@@ -164,10 +164,14 @@ function cube(fw: number, fh: number, d: number, p: Pose): Grid {
 
   // The face. Eye gap and mouth width follow the front's parity so both stay centred.
   const eh = fh >= 13 ? 3 : 2
-  const gap = fw % 2 ? 3 : 4
+  // Narrow the gap (by 2, keeping it centred) until both eyes clear the outline and the crease.
+  let gap = fw % 2 ? 3 : 4
+  while (fw - 4 - gap < 2 && gap > 1) gap -= 2
   const left = (fw - (4 + gap)) / 2
+  // A glance moves both eyes, but never onto the outline (x 0) or the crease (x fw-1).
+  const look = Math.max(1 - left, Math.min(fw - 5 - left - gap, p.look))
   const ey = 1 + Math.round((fh - 2) * 0.25) - (p.up ? 1 : 0)
-  for (const ex of [left + p.look, left + 2 + gap + p.look]) {
+  for (const ex of [left + look, left + 2 + gap + look]) {
     if (p.eyes === 'closed') {
       front(ex, ey + eh - 1, 'E')
       front(ex + 1, ey + eh - 1, 'E')
