@@ -1,4 +1,4 @@
-# skill-pulse
+# skill-cubehub
 
 A live **Pulse** pane for Claude Code. It shows what Claude is doing while it works, including which skills and tools it uses, plus a plan-first workflow where Claude waits for your approval before it executes.
 
