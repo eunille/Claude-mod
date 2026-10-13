@@ -1,7 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface, Register } from 'claude-code'
 
-import type { PulseEventKind, PulsePhase, PulsePlan, PulsePrefs, PulseStats, PulseStyle, PulseTheme, PulseView } from '../types'
+import type { PulseEventKind, PulseMascot, PulsePhase, PulsePlan, PulsePrefs, PulseStats, PulseStyle, PulseTheme, PulseView } from '../types'
+import { DARK as CUBE_DARK, frameAt, LIGHT as CUBE_LIGHT, TERMINAL_SIZE, toCells } from './cubeman'
+import type { Mood as CubeMood } from './cubeman'
 import { OWL_COLORWAYS, OWL_COLUMNS, OWL_ROWS, OWLS, owlCells, STILL } from './owl'
 import type { OwlMood, OwlPose } from './owl'
 
@@ -24,6 +26,8 @@ const CHECK =
   /\b(?:(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+(?:test|lint|typecheck|check|build)|vitest|jest|pytest|tsc|eslint|biome|mypy|ruff|cargo\s+(?:test|check|clippy)|go\s+(?:test|vet)|plugin\s+(?:test|validate)|dotnet\s+test|mvn\s+test|gradlew?\s+test)\b/i
 const HISTORY_MAX = 20
 const FRAME_MS = 500
+/** Cubeman's jump has short frames: redraw this often while it is lively, and stretch every frame to at least this. */
+const CUBE_FRAME_MS = 250
 const USAGE_EVERY_MS = 10_000
 const APPROVE = /^(y|yes|yep|yeah|ok|okay|sure|approve|approved|go|go ahead|proceed|continue|lgtm|ship it|do it|good|great|perfect|nice|sounds good|looks good)\b/i
 const HEDGE = /\b(but|change|instead|except|first|wait|no|not|don't|dont)\b/i
@@ -91,7 +95,7 @@ const fresh = (now: number): PulseStats => ({
 
 const stats = atom({ plugin: 'skill-pulse', key: 'stats' } as const, fresh(0))
 const view = atom({ plugin: 'skill-pulse', key: 'view' } as const, 'overview' as PulseView)
-const DEFAULT_PREFS: PulsePrefs = { style: 'powerline', owl: true, owlColor: 'night', planFlow: true, theme: 'auto' }
+const DEFAULT_PREFS: PulsePrefs = { style: 'powerline', owl: true, owlColor: 'night', mascot: 'owl', planFlow: true, theme: 'auto' }
 const prefs = atom({ plugin: 'skill-pulse', key: 'prefs' } as const, DEFAULT_PREFS)
 
 type Dollar = EngineInterface
@@ -555,33 +559,35 @@ function isLively(s: PulseStats): boolean {
  * What the owl shows: an error first, then a plan waiting, a plan just done, work, idleness.
  * Eyes change per mood; the pose moves the body: a shake, a twitch, a hop, a bob and flap, a breath.
  */
-function owlMood(s: PulseStats): { mood: OwlMood; pose: OwlPose; caption: string; color: string } {
+function owlMood(s: PulseStats): { mood: OwlMood; pose: OwlPose; cube: CubeMood; caption: string; color: string } {
   const f = Math.floor(s.now / FRAME_MS)
   const tick = Math.floor(s.now / TICK_MS)
   const lastAt = s.timeline[s.timeline.length - 1]?.at ?? s.startedAt
   if (s.lastError && s.now - s.lastError.at < 8_000) {
-    return { mood: 'alarm', pose: { ...STILL, dx: f % 2 ? 0 : 2, isFlap: f % 4 < 2 }, caption: '!! error', color: P.err }
+    return { mood: 'alarm', pose: { ...STILL, dx: f % 2 ? 0 : 2, isFlap: f % 4 < 2 }, cube: 'error', caption: '!! error', color: P.err }
   }
   if (isOpen(s.plan)) {
-    return { mood: f % 12 < 2 ? 'blink' : 'curious', pose: { ...STILL, isTwitch: f % 6 === 0, dy: f % 6 === 3 ? 0 : 1 }, caption: 'hoo? approve', color: P.warn }
+    return { mood: f % 12 < 2 ? 'blink' : 'curious', pose: { ...STILL, isTwitch: f % 6 === 0, dy: f % 6 === 3 ? 0 : 1 }, cube: 'waiting', caption: 'hoo? approve', color: P.warn }
   }
   if (s.plan?.status === 'done' && s.now - (s.plan.endedAt ?? 0) < 60_000) {
     // Hops for the first few seconds, then now and then.
     const isHopping = s.now - (s.plan.endedAt ?? 0) < 4_000 || f % 8 < 2
     const isUp = isHopping && f % 2 === 0
-    return { mood: 'happy', pose: { ...STILL, dy: isUp ? 0 : 2, isFlap: isUp }, caption: '✓ hoot!', color: P.ok }
+    return { mood: 'happy', pose: { ...STILL, dy: isUp ? 0 : 2, isFlap: isUp }, cube: 'done', caption: '✓ hoot!', color: P.ok }
   }
   if (s.isBusy || s.running.length > 0) {
     const glance = (['look', 'glanceL', 'look', 'glanceR'] as const)[Math.floor(f / 4) % 4] ?? 'look'
-    return { mood: f % 14 === 0 ? 'blink' : glance, pose: { ...STILL, dy: f % 2 ? 1 : 2, isFlap: f % 4 === 1 }, caption: 'working', color: P.ok }
+    return { mood: f % 14 === 0 ? 'blink' : glance, pose: { ...STILL, dy: f % 2 ? 1 : 2, isFlap: f % 4 === 1 }, cube: 'working', caption: 'working', color: P.ok }
   }
   // Idle and asleep the owl stays put: only a blink or an ear twitch now and then.
-  if (s.now - lastAt > 120_000) return { mood: 'sleep', pose: STILL, caption: tick % 2 ? 'z Z z' : 'Z z Z', color: P.muted }
-  return { mood: tick % 9 === 0 ? 'blink' : 'sleepy', pose: { ...STILL, isTwitch: tick % 7 === 3 }, caption: 'idle', color: P.muted }
+  if (s.now - lastAt > 120_000) return { mood: 'sleep', pose: STILL, cube: 'sleep', caption: tick % 2 ? 'z Z z' : 'Z z Z', color: P.muted }
+  return { mood: tick % 9 === 0 ? 'blink' : 'sleepy', pose: { ...STILL, isTwitch: tick % 7 === 3 }, cube: 'idle', caption: 'idle', color: P.muted }
 }
 
 /** The owl's column: its canvas, a cell of air each side, and a row of air above. */
-const OWL_BOX = OWL_COLUMNS + 2
+const OWL_BOX = Math.max(OWL_COLUMNS, TERMINAL_SIZE) + 2
+/** Cubeman's own words where the owl's are owlish. */
+const CUBE_CAPTION: Partial<Record<CubeMood, string>> = { waiting: '? approve', done: '✓ done!' }
 
 type RasterElement = Elements['terminal']['Raster']
 
@@ -590,15 +596,27 @@ function Owl(ui: UI, $: Dollar, Raster: RasterElement, s: PulseStats, p: PulsePr
   const m = owlMood(s)
   const colors = OWLS[p.owlColor][P.isLight ? 'light' : 'dark']
   const next = OWL_COLORWAYS[(OWL_COLORWAYS.indexOf(p.owlColor) + 1) % OWL_COLORWAYS.length] ?? 'night'
+  const isCube = p.mascot === 'cubeman'
   return (
     <Box flexDirection="column" alignItems="center" width={OWL_BOX} marginTop={1}>
-      <Raster key="owl" columns={OWL_COLUMNS} rows={OWL_ROWS} cells={owlCells(m.mood, colors, m.pose)} />
+      {isCube ? (
+        <Raster
+          key="cubeman"
+          columns={TERMINAL_SIZE}
+          rows={TERMINAL_SIZE / 2}
+          cells={toCells(frameAt(m.cube, s.now, TERMINAL_SIZE, CUBE_FRAME_MS), P.isLight ? CUBE_LIGHT : CUBE_DARK)}
+        />
+      ) : (
+        <Raster key="owl" columns={OWL_COLUMNS} rows={OWL_ROWS} cells={owlCells(m.mood, colors, m.pose)} />
+      )}
       <Text color={m.color} wrap="truncate-end">
-        {m.caption}
+        {(isCube && CUBE_CAPTION[m.cube]) || m.caption}
       </Text>
-      <Button key="owl-cycle" plain hotkey="o" onPress={() => savePrefs($, { owlColor: next })}>
-        <Text color={P.muted}>{`◂ ${p.owlColor} ▸`}</Text>
-      </Button>
+      {!isCube && (
+        <Button key="owl-cycle" plain hotkey="o" onPress={() => savePrefs($, { owlColor: next })}>
+          <Text color={P.muted}>{`◂ ${p.owlColor} ▸`}</Text>
+        </Button>
+      )}
     </Box>
   )
 }
@@ -630,6 +648,11 @@ function Settings(ui: UI, $: Dollar, p: PulsePrefs) {
         choice('theme-mocha', 'mocha', p.theme === 'mocha', { theme: 'mocha' }, [MOCHA.accent, MOCHA.skill, MOCHA.tool]),
         choice('theme-latte', 'latte', p.theme === 'latte', { theme: 'latte' }, [LATTE.accent, LATTE.skill, LATTE.tool]),
         choice('theme-terminal', 'terminal', p.theme === 'terminal', { theme: 'terminal' }),
+      ])}
+      {row('MASCOT', [
+        choice('mascot-owl', 'owl', p.owl && p.mascot !== 'cubeman', { owl: true, mascot: 'owl' }),
+        choice('mascot-cubeman', 'cubeman', p.owl && p.mascot === 'cubeman', { owl: true, mascot: 'cubeman' }),
+        choice('mascot-off', 'off', !p.owl, { owl: false }),
       ])}
       {row('OWL', [
         ...OWL_COLORWAYS.map(c => {
@@ -1152,7 +1175,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'pulse',
       description: 'Live monitor of skills, tools, subagents, plan phases, context and tokens',
-      argumentHint: '[reset | report | style powerline|rounded|plain | owl night|barn|snowy|lilac|off]',
+      argumentHint: '[reset | report | style powerline|rounded|plain | mascot owl|cubeman|off | owl night|barn|snowy|lilac|off]',
     })
     try {
       const saved = (await $.store.get('prefs')) as Partial<PulsePrefs> | undefined
@@ -1169,13 +1192,14 @@ export const register: Register = on => {
     // A value kept from an older version lacks the newer fields: fill them in.
     await update($, stats, s => (s.startedAt === 0 ? { ...fresh(now), allTimeSkills: allTime, history } : roll({ ...fresh(now), ...s, history: s.history ?? history }, now)))
 
-    // Every FRAME_MS while the owl has something to act out, every TICK_MS otherwise.
+    // While the mascot has something to act out, every FRAME_MS (owl) or CUBE_FRAME_MS (Cubeman); every TICK_MS otherwise.
     let lastDrawAt = 0
     let lastUsageAt = 0
-    $.clock.every(FRAME_MS, () => {
+    $.clock.every(CUBE_FRAME_MS, () => {
       void (async () => {
         const t = await $.clock.now()
-        if (t - lastDrawAt < TICK_MS && !isLively(await read($, stats))) return
+        const interval = !isLively(await read($, stats)) ? TICK_MS : (await read($, prefs)).mascot === 'cubeman' ? CUBE_FRAME_MS : FRAME_MS
+        if (t - lastDrawAt < interval) return
         lastDrawAt = t
         const s = await update($, stats, prev => roll(prev, t))
         $.ui.status(statusText(s))
@@ -1205,23 +1229,29 @@ export const register: Register = on => {
     }
     if (arg === 'report') return { text: report(await read($, stats)) }
     const [word, value] = arg.split(/\s+/)
-    if (word === 'style' || word === 'owl') {
+    if (word === 'style' || word === 'owl' || word === 'mascot') {
       const current = await read($, prefs)
       const colorway = OWL_COLORWAYS.find(c => c === value)
       let change: Partial<PulsePrefs> | undefined
       if (word === 'style' && (value === 'powerline' || value === 'rounded' || value === 'plain')) change = { style: value }
       if (word === 'owl' && (value === 'on' || value === 'off')) change = { owl: value === 'on' }
-      if (word === 'owl' && colorway) change = { owl: true, owlColor: colorway }
+      if (word === 'owl' && colorway) change = { owl: true, owlColor: colorway, mascot: 'owl' }
+      if (word === 'mascot' && (value === 'owl' || value === 'cubeman')) change = { owl: true, mascot: value as PulseMascot }
+      if (word === 'mascot' && value === 'off') change = { owl: false }
       if (!change) {
         return {
           text:
             word === 'style'
               ? `Style is ${current.style}. Use /pulse style powerline, rounded or plain — or the ⚙ Settings tab.`
-              : `The owl is ${current.owl ? current.owlColor : 'off'}. Use /pulse owl ${OWL_COLORWAYS.join('|')}|off — or the ⚙ Settings tab.`,
+              : word === 'mascot'
+                ? `The mascot is ${current.owl ? current.mascot : 'off'}. Use /pulse mascot owl|cubeman|off — or the ⚙ Settings tab.`
+                : `The owl is ${current.owl ? current.owlColor : 'off'}. Use /pulse owl ${OWL_COLORWAYS.join('|')}|off — or the ⚙ Settings tab.`,
         }
       }
       const chosen = await savePrefs($, change)
-      return { text: word === 'style' ? `Pulse style: ${chosen.style}.` : chosen.owl ? `Pulse owl: ${chosen.owlColor} — hoo!` : 'Pulse owl off.' }
+      if (word === 'style') return { text: `Pulse style: ${chosen.style}.` }
+      if (word === 'mascot') return { text: chosen.owl ? `Pulse mascot: ${chosen.mascot}.` : 'Pulse mascot off.' }
+      return { text: chosen.owl ? `Pulse owl: ${chosen.owlColor} — hoo!` : 'Pulse owl off.' }
     }
     await $.ui.open({ id: PANE, title: TITLE })
     return { text: 'Pulse monitor opened. Keys in the pane: 1 overview · 2 tools & files · 3 plans · 4 timeline · 5 settings · o owl colours · r reset · a approve plan.' }

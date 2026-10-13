@@ -333,6 +333,24 @@ test('the owl moves between poses', () => {
   expect(owlCells('look', colors, { ...STILL, isTwitch: true })).not.toBe(still)
 })
 
+test('the mascot switches to Cubeman and back', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+
+  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'v-settings' })
+  await ui.press({ key: 'mascot-cubeman' })
+  expect(await ui.find({ key: 'cubeman' })).toBeDefined()
+  expect(await ui.find({ key: 'owl' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /● cubeman/ })).toBeDefined()
+
+  expect((await $.command.run({ ...RUN, args: 'mascot owl' })).text).toContain('owl')
+  await ui.redraw()
+  expect(await ui.find({ key: 'owl' })).toBeDefined()
+  expect(await ui.find({ key: 'cubeman' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('an answer with changes keeps the plan waiting', async ($, on) => {
   mock.clock(on)
   mock.store(on)
