@@ -33,15 +33,18 @@ export type Grid = Key[][]
 export type Frame = { grid: Grid; ms: number }
 
 export const MIN_SIZE = 16
-export const TERMINAL_SIZE = 18
+export const TERMINAL_SIZE = 20
 export const WEB_SIZE = 26
 
-type Eyes = 'open' | 'closed' | 'happy' | 'shocked'
+type Eyes = 'open' | 'closed' | 'shocked'
 type Mouth = 'smile' | 'open' | 'oh' | 'flat'
-type Shape = 'n' | 'squash' | 'stretch'
-/** One frame's pose: lift is a share (0-1) of the room above the cube; look shifts the eyes; dx shakes the body. */
+/**
+ * One frame's pose. squash widens and flattens the cube by that many pixels (negative stretches it tall);
+ * lift is a share (0-1) of the room above the cube; look shifts the eyes; dx shakes the body;
+ * dust is the beat of the landing burst, counted from the moment of impact.
+ */
 type Pose = {
-  shape: Shape
+  squash: number
   lift: number
   eyes: Eyes
   mouth: Mouth
@@ -56,7 +59,7 @@ type Pose = {
 }
 
 const pose = (ms: number, o: Partial<Pose> = {}): Pose => ({
-  shape: 'n',
+  squash: 0,
   lift: 0,
   eyes: 'open',
   mouth: 'smile',
@@ -69,17 +72,21 @@ const pose = (ms: number, o: Partial<Pose> = {}): Pose => ({
   ...o,
 })
 
+// The eyes hold still through every hop and jump: only the body moves, and it blinks once on impact.
 const SCRIPT: Record<Mood, Pose[]> = {
   idle: [pose(2400), pose(140, { eyes: 'closed' }), pose(1800), pose(140, { eyes: 'closed' })],
   working: [
-    pose(160, { look: -1 }),
-    pose(100, { shape: 'squash', look: -1 }),
-    pose(100, { shape: 'stretch', lift: 0.3, look: -1 }),
-    pose(140, { lift: 0.5 }),
-    pose(100, { shape: 'stretch', lift: 0.3, look: 1 }),
-    pose(100, { shape: 'squash', look: 1 }),
-    pose(160, { look: 1 }),
     pose(300),
+    pose(110, { squash: 1 }),
+    pose(100, { squash: -1, lift: 0.35 }),
+    pose(120, { lift: 0.6 }),
+    pose(120, { lift: 0.6 }),
+    pose(100, { squash: -1, lift: 0.35 }),
+    pose(110, { squash: 1 }),
+    pose(500),
+    pose(600, { look: -1 }),
+    pose(300),
+    pose(600, { look: 1 }),
   ],
   waiting: [
     pose(600, { up: true, ask: true }),
@@ -95,19 +102,32 @@ const SCRIPT: Record<Mood, Pose[]> = {
     pose(700, { eyes: 'shocked', mouth: 'flat' }),
   ],
   done: [
-    pose(300),
-    pose(160, { shape: 'squash', eyes: 'closed' }),
-    pose(90, { shape: 'stretch', lift: 0.4, mouth: 'oh' }),
-    pose(90, { shape: 'stretch', lift: 0.8, mouth: 'oh' }),
-    pose(140, { lift: 1, eyes: 'happy', mouth: 'open' }),
-    pose(120, { lift: 1, eyes: 'happy', mouth: 'open' }),
-    pose(90, { shape: 'stretch', lift: 0.6, mouth: 'oh' }),
-    pose(70, { shape: 'stretch', lift: 0.2, mouth: 'oh' }),
-    pose(110, { shape: 'squash', eyes: 'closed', dust: 0 }),
-    pose(110, { eyes: 'happy', mouth: 'open', dust: 1 }),
-    pose(120, { eyes: 'happy', mouth: 'open', dust: 2 }),
-    pose(300, { eyes: 'happy', mouth: 'open', dust: 3 }),
-    pose(500),
+    pose(600),
+    // Anticipation: sink into a crouch.
+    pose(120, { squash: 1 }),
+    pose(140, { squash: 2 }),
+    // Launch and an eased rise: fast off the ground, slowing to the top.
+    pose(100, { squash: -1, lift: 0.45, mouth: 'open' }),
+    pose(100, { squash: -1, lift: 0.75, mouth: 'open' }),
+    pose(110, { lift: 0.92, mouth: 'open' }),
+    // Hang time at the top.
+    pose(160, { lift: 1, mouth: 'open' }),
+    pose(160, { lift: 1, mouth: 'open' }),
+    // An eased fall: slow off the top, fast to the ground.
+    pose(110, { lift: 0.92, mouth: 'open' }),
+    pose(100, { squash: -1, lift: 0.75, mouth: 'open' }),
+    pose(90, { squash: -1, lift: 0.45, mouth: 'open' }),
+    // Impact: squash, blink, and the burst begins.
+    pose(130, { squash: 2, eyes: 'closed', mouth: 'oh', dust: 0 }),
+    pose(120, { squash: 1, dust: 1 }),
+    // A small rebound hop.
+    pose(110, { squash: -1, lift: 0.25, mouth: 'open', dust: 2 }),
+    pose(110, { squash: 1, dust: 3 }),
+    // Jelly wobble while it settles in place, the specks falling and fading.
+    pose(120, { squash: -1, dust: 4 }),
+    pose(120, { squash: 1, dust: 5 }),
+    pose(140, { dust: 6 }),
+    pose(700),
   ],
   sleep: [
     pose(800, { eyes: 'closed', mouth: 'flat', z: 0 }),
@@ -119,6 +139,14 @@ const SCRIPT: Record<Mood, Pose[]> = {
 const ASK_TALL = ['BBB', '..B', '.BB', '...', '.B.']
 const ASK_SHORT = ['BBB', '..B', '.B.']
 const ZED = ['OOO', '.O.', 'OOO']
+/** The landing specks: sideways speed and upward speed, in pixels per beat. */
+const SPECKS: { vx: number; vy: number }[] = [
+  { vx: 0.35, vy: 2.2 },
+  { vx: 0.7, vy: 2.8 },
+  { vx: 1.05, vy: 1.6 },
+]
+const SPECK_INK = ['R', 'Y', 'B'] as const
+const GRAVITY = 0.9
 
 const NEIGHBOURS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]]
 
@@ -163,21 +191,18 @@ function cube(fw: number, fh: number, d: number, p: Pose): Grid {
   })
 
   // The face. Eye gap and mouth width follow the front's parity so both stay centred.
-  const eh = fh >= 13 ? 3 : 2
+  const eh = fh >= 12 ? 3 : 2
   // Narrow the gap (by 2, keeping it centred) until both eyes clear the outline and the crease.
   let gap = fw % 2 ? 3 : 4
   while (fw - 4 - gap < 2 && gap > 1) gap -= 2
   const left = (fw - (4 + gap)) / 2
   // A glance moves both eyes, but never onto the outline (x 0) or the crease (x fw-1).
   const look = Math.max(1 - left, Math.min(fw - 5 - left - gap, p.look))
-  const ey = 1 + Math.round((fh - 2) * 0.25) - (p.up ? 1 : 0)
+  const ey = 1 + Math.round((fh - 2) * 0.2) - (p.up ? 1 : 0)
   for (const ex of [left + look, left + 2 + gap + look]) {
     if (p.eyes === 'closed') {
       front(ex, ey + eh - 1, 'E')
       front(ex + 1, ey + eh - 1, 'E')
-    } else if (p.eyes === 'happy') {
-      front(ex, ey + eh - 2, 'E')
-      front(ex + 1, ey + eh - 2, 'E')
     } else {
       for (let r = 0; r < eh; r++) {
         front(ex, ey + r, 'E')
@@ -186,9 +211,11 @@ function cube(fw: number, fh: number, d: number, p: Pose): Grid {
       if (p.eyes === 'open') front(ex, ey, 'H')
     }
   }
-  if (left - 1 >= 1) front(left - 1, ey + eh, 'K')
-  if (left + 4 + gap <= fw - 2) front(left + 4 + gap, ey + eh, 'K')
-  const mw = fw % 2 ? 3 : 4
+  // Rosy cheeks just under the outer corner of each eye.
+  front(left, ey + eh, 'K')
+  front(left + 3 + gap, ey + eh, 'K')
+  // A wide U smile: corners up, a flat bottom between them.
+  const mw = fw >= 9 ? (fw % 2 ? 5 : 4) : fw % 2 ? 3 : 4
   const mx = (fw - mw) / 2
   const my = ey + eh + 1
   const mouth = my + 1 >= fh - 1 ? 'flat' : p.mouth
@@ -221,7 +248,8 @@ function cube(fw: number, fh: number, d: number, p: Pose): Grid {
 /** One frame on a size×size canvas: the cube standing on a shadow, lifted, squashed or shaken by the pose. */
 function draw(size: number, p: Pose): Grid {
   const { d, f } = dims(size)
-  const [fw, fh] = p.shape === 'squash' ? [f + 2, f - 2] : p.shape === 'stretch' ? [f - 1, f + 1] : [f, f]
+  const fw = f + p.squash
+  const fh = f - p.squash
   const c = cube(fw, fh, d, p)
   const bw = fw + d
   const bh = fh + d
@@ -247,16 +275,23 @@ function draw(size: number, p: Pose): Grid {
   }
   if (p.z !== undefined) stamp(ZED, Math.min(size - 3, x0 + fw + p.z), Math.max(0, y0 - 3 - p.z))
   if (p.dust !== undefined) {
-    // Three specks a side pop up beside the bottom corners, spread out as far as the canvas allows, then settle.
+    // Specks fly from the standing cube's bottom corners on a falling arc, land, fade to grey and vanish;
+    // a puff of dust slides out along the ground for the first beats. Anchored to the standing cube so
+    // the specks don't jump as the body squashes and stretches.
     const t = p.dust
+    const standW = f + d
+    const standX = Math.floor((size - standW) / 2)
     for (const dir of [-1, 1]) {
-      const base = dir < 0 ? x0 - 1 : x0 + bw
-      const room = Math.max(0, dir < 0 ? base : size - 1 - base)
-      for (let i = 0; i < 3; i++) {
-        if (t === 3 && i === 2) continue
-        const rise = i * 2 + (t === 1 ? 1 : t === 3 ? -i : 0)
-        put(base + dir * Math.min(i + t, room), ground - 1 - rise, (['R', 'Y', 'B'] as const)[(i + t) % 3]!)
-      }
+      const base = dir < 0 ? standX - 1 : standX + standW
+      const reach = Math.max(0, dir < 0 ? base : size - 1 - base)
+      SPECKS.forEach((s, i) => {
+        const ink: Key | undefined = t <= 3 ? SPECK_INK[dir < 0 ? i : 2 - i] : t <= 5 || (t === 6 && i !== 1) ? 'G' : undefined
+        if (!ink) return
+        const x = base + dir * Math.min(reach, Math.round(s.vx * t))
+        const y = Math.min(ground - 1, Math.round(ground - 1 - (s.vy * t - 0.5 * GRAVITY * t * t)))
+        put(x, y, ink)
+      })
+      if (t <= 3) put(base + dir * Math.min(reach, t), ground, 'G')
     }
   }
   return g

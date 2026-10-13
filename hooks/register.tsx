@@ -27,7 +27,7 @@ const CHECK =
 const HISTORY_MAX = 20
 const FRAME_MS = 500
 /** Cubeman's jump has short frames: redraw this often while it is lively, and stretch every frame to at least this. */
-const CUBE_FRAME_MS = 250
+const CUBE_FRAME_MS = 150
 const USAGE_EVERY_MS = 10_000
 const APPROVE = /^(y|yes|yep|yeah|ok|okay|sure|approve|approved|go|go ahead|proceed|continue|lgtm|ship it|do it|good|great|perfect|nice|sounds good|looks good)\b/i
 const HEDGE = /\b(but|change|instead|except|first|wait|no|not|don't|dont)\b/i
