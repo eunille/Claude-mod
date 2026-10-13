@@ -80,7 +80,7 @@ test('a plan waits for approval, then tracks its phases', async ($, on) => {
   await ui.unmount()
 })
 
-test('the owl and the bars draw on the terminal, the owl stays off the desktop', async ($, on) => {
+test('Cubeman is the default mascot; the owl and the bars draw on the terminal, no mascot on the desktop', async ($, on) => {
   mock.clock(on)
   mock.store(on)
   on('tool.call', () => ({ result: { ok: true } }))
@@ -88,6 +88,12 @@ test('the owl and the bars draw on the terminal, the owl stays off the desktop',
   await $.tool.call({ tool: PLAN, action: 'propose', title: 'Owl test', phases: ['One', 'Two', 'Three'] })
 
   const term = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  expect(await term.find({ key: 'cubeman' })).toBeDefined()
+  expect(await term.find({ key: 'owl' })).toBeUndefined()
+  expect(await term.find({ type: 'Text', text: /\? approve/ })).toBeDefined()
+
+  await $.command.run({ ...RUN, args: 'mascot owl' })
+  await term.redraw()
   expect(await term.find({ key: 'owl' })).toBeDefined()
   expect(await term.find({ type: 'Text', text: /hoo\? approve/ })).toBeDefined()
   expect(await term.find({ type: 'Text', text: /PULSE/ })).toBeDefined()
@@ -97,6 +103,7 @@ test('the owl and the bars draw on the terminal, the owl stays off the desktop',
 
   const desk = await $.ui.mount({ plugin: 'skill-pulse', surface: 'desktop', ...PANE })
   expect(await desk.find({ key: 'owl' })).toBeUndefined()
+  expect(await desk.find({ key: 'cubeman' })).toBeUndefined()
   expect(await desk.find({ type: 'Text', text: /PULSE/ })).toBeDefined()
   await desk.unmount()
 })
@@ -119,6 +126,7 @@ test('the Settings tab and the owl button change colours and style', async ($, o
   mock.clock(on)
   mock.store(on)
 
+  await $.command.run({ ...RUN, args: 'mascot owl' })
   const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
   expect(await ui.find({ type: 'Text', text: /◂ night ▸/ })).toBeDefined()
   await ui.press({ key: 'owl-cycle' })

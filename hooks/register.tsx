@@ -98,7 +98,7 @@ const fresh = (now: number): PulseStats => ({
 
 const stats = atom({ plugin: 'skill-pulse', key: 'stats' } as const, fresh(0))
 const view = atom({ plugin: 'skill-pulse', key: 'view' } as const, 'overview' as PulseView)
-const DEFAULT_PREFS: PulsePrefs = { style: 'powerline', owl: true, owlColor: 'night', mascot: 'owl', planFlow: true, theme: 'auto' }
+const DEFAULT_PREFS: PulsePrefs = { style: 'powerline', owl: true, owlColor: 'night', mascot: 'cubeman', planFlow: true, theme: 'auto' }
 const prefs = atom({ plugin: 'skill-pulse', key: 'prefs' } as const, DEFAULT_PREFS)
 
 type Dollar = EngineInterface
