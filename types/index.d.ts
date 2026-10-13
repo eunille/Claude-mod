@@ -67,6 +67,9 @@ export type PulseStats = {
   day: string
   dayStart: number
   costBase: number
+  /** Changes made this turn (file edits, shell writes, commits), and when the last turn that made some ended. */
+  turnWork: number
+  celebrateAt?: number
   /** The last skill counted and when: the Skill tool and skill.prompt can both report one load. */
   lastSkill?: { name: string; at: number }
 }

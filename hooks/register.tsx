@@ -94,6 +94,7 @@ const fresh = (now: number): PulseStats => ({
   day: '',
   dayStart: 0,
   costBase: 0,
+  turnWork: 0,
 })
 
 const stats = atom({ plugin: 'skill-pulse', key: 'stats' } as const, fresh(0))
@@ -394,6 +395,7 @@ function startPhase(phases: PulsePhase[], index: number, now: number): PulsePhas
 const commandOf = (tool: string, a: Record<string, unknown>) => (SHELL_TOOLS.has(tool) && typeof a.command === 'string' ? a.command : '')
 const isShellWrite = (tool: string, a: Record<string, unknown>) => SHELL_WRITE.test(commandOf(tool, a).replace(SHELL_DISCARD, ''))
 const isCheck = (tool: string, a: Record<string, unknown>) => CHECK.test(commandOf(tool, a))
+const isCommit = (tool: string, a: Record<string, unknown>) => /\bgit\s+(?:commit|push)\b/.test(commandOf(tool, a))
 
 /** Ends the plan as done or cancelled and files it in the history, newest first. */
 function endPlan(s: PulseStats, status: 'done' | 'cancelled', now: number): PulseStats {
@@ -615,6 +617,19 @@ function Header(ui: UI, s: PulseStats, W: number) {
   return Bar(ui, list)
 }
 
+/** How long a turn that changed something is celebrated: about one jump at terminal pace. */
+const CELEBRATE_MS = 4_500
+
+/**
+ * When the current celebration began, if one is on: a plan finished in the last minute, or, while
+ * nothing else is running, a turn that changed files or committed in the last few seconds.
+ */
+function celebrationStart(s: PulseStats): number | undefined {
+  if (s.plan?.status === 'done' && s.now - (s.plan.endedAt ?? 0) < 60_000) return s.plan.endedAt ?? s.now
+  if (!s.isBusy && s.celebrateAt !== undefined && s.now - s.celebrateAt < CELEBRATE_MS) return s.celebrateAt
+  return undefined
+}
+
 /** Whether the owl has something to act out, and so redraws every FRAME_MS rather than every TICK_MS. */
 function isLively(s: PulseStats): boolean {
   return (
@@ -622,7 +637,7 @@ function isLively(s: PulseStats): boolean {
     s.running.length > 0 ||
     isOpen(s.plan) ||
     (s.lastError !== undefined && s.now - s.lastError.at < 8_000) ||
-    (s.plan?.status === 'done' && s.now - (s.plan.endedAt ?? 0) < 60_000)
+    celebrationStart(s) !== undefined
   )
 }
 
@@ -630,7 +645,7 @@ function isLively(s: PulseStats): boolean {
  * What the owl shows: an error first, then a plan waiting, a plan just done, work, idleness.
  * Eyes change per mood; the pose moves the body: a shake, a twitch, a hop, a bob and flap, a breath.
  */
-function owlMood(s: PulseStats): { mood: OwlMood; pose: OwlPose; cube: CubeMood; caption: string; color: string } {
+function owlMood(s: PulseStats): { mood: OwlMood; pose: OwlPose; cube: CubeMood; since?: number; caption: string; color: string } {
   const f = Math.floor(s.now / FRAME_MS)
   const tick = Math.floor(s.now / TICK_MS)
   const lastAt = s.timeline[s.timeline.length - 1]?.at ?? s.startedAt
@@ -640,11 +655,12 @@ function owlMood(s: PulseStats): { mood: OwlMood; pose: OwlPose; cube: CubeMood;
   if (isOpen(s.plan)) {
     return { mood: f % 12 < 2 ? 'blink' : 'curious', pose: { ...STILL, isTwitch: f % 6 === 0, dy: f % 6 === 3 ? 0 : 1 }, cube: 'waiting', caption: 'hoo? approve', color: P.warn }
   }
-  if (s.plan?.status === 'done' && s.now - (s.plan.endedAt ?? 0) < 60_000) {
-    // Hops for the first few seconds, then now and then.
-    const isHopping = s.now - (s.plan.endedAt ?? 0) < 4_000 || f % 8 < 2
+  const since = celebrationStart(s)
+  if (since !== undefined) {
+    // Hops for the first few seconds, then now and then; Cubeman's jump starts from its first frame at `since`.
+    const isHopping = s.now - since < 4_000 || f % 8 < 2
     const isUp = isHopping && f % 2 === 0
-    return { mood: 'happy', pose: { ...STILL, dy: isUp ? 0 : 2, isFlap: isUp }, cube: 'done', caption: '✓ hoot!', color: P.ok }
+    return { mood: 'happy', pose: { ...STILL, dy: isUp ? 0 : 2, isFlap: isUp }, cube: 'done', since, caption: '✓ hoot!', color: P.ok }
   }
   if (s.isBusy || s.running.length > 0) {
     const glance = (['look', 'glanceL', 'look', 'glanceR'] as const)[Math.floor(f / 4) % 4] ?? 'look'
@@ -675,7 +691,7 @@ function Owl(ui: UI, $: Dollar, Raster: RasterElement, s: PulseStats, p: PulsePr
           key="cubeman"
           columns={TERMINAL_SIZE}
           rows={TERMINAL_SIZE / 2}
-          cells={toCells(frameAt(m.cube, s.now, TERMINAL_SIZE, CUBE_FRAME_MS), P.isLight ? CUBE_LIGHT : CUBE_DARK)}
+          cells={toCells(frameAt(m.cube, s.now - (m.since ?? 0), TERMINAL_SIZE, CUBE_FRAME_MS), P.isLight ? CUBE_LIGHT : CUBE_DARK)}
         />
       ) : (
         <Raster key="owl" columns={OWL_COLUMNS} rows={OWL_ROWS} cells={owlCells(m.mood, colors, m.pose)} />
@@ -1446,6 +1462,7 @@ export const register: Register = on => {
         const updated: PulseStats = {
           ...s,
           plan,
+          turnWork: s.turnWork + (!denied && !isError && (isEdit || isCommit(tool, args)) ? 1 : 0),
           running: s.running.filter(r => r.id !== e.tool_use_id),
           tools: { ...s.tools, [tool]: { ...t, errors: t.errors + (isError ? 1 : 0), totalMs: t.totalMs + ms, maxMs: Math.max(t.maxMs, ms) } },
         }
@@ -1567,7 +1584,7 @@ export const register: Register = on => {
 
   on('turn.start', async ($, e, next) => {
     const now = await $.clock.now()
-    await update($, stats, prev => ({ ...roll(prev, now), isBusy: true, turnSpent: 0 }))
+    await update($, stats, prev => ({ ...roll(prev, now), isBusy: true, turnSpent: 0, turnWork: 0 }))
     return next(e)
   })
 
@@ -1617,7 +1634,14 @@ export const register: Register = on => {
         )
       }
       return withEvent(
-        { ...s, isBusy: false, turns: s.turns + 1, turnTokens: [...s.turnTokens, spent].slice(-30) },
+        {
+          ...s,
+          isBusy: false,
+          turns: s.turns + 1,
+          turnTokens: [...s.turnTokens, spent].slice(-30),
+          // A turn that changed something ends with a celebration.
+          celebrateAt: s.turnWork > 0 && e.reason === 'answer' ? now : s.celebrateAt,
+        },
         'turn',
         `turn ${s.turns + 1} ${e.reason === 'answer' ? 'done' : e.reason} · ${dur(e.durationMs)} · ${num(spent)} tok`,
       )

@@ -395,6 +395,33 @@ test('the mascot switches to Cubeman and back', async ($, on) => {
   await ui.unmount()
 })
 
+test('a turn that changed files ends with the done jump; a read-only turn does not', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  const turn = async (id: string, work: () => Promise<unknown>) => {
+    await $.turn.start({ text: 'go', turnId: id })
+    await work()
+    await $.turn.complete({ answer: 'ok', durationMs: 1000, isAborted: false, turnId: id, reason: 'answer' })
+  }
+
+  await turn('t1', () => $.tool.call({ tool: 'Read', file_path: 'C:/repo/a.ts' }))
+  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /✓ done!/ })).toBeUndefined()
+
+  await turn('t2', () => $.tool.call({ tool: 'Edit', file_path: 'C:/repo/a.ts', old_string: 'a', new_string: 'b' }))
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: /✓ done!/ })).toBeDefined()
+
+  await clock.advance(10_000)
+  await $.tool.call({ tool: 'Read', file_path: 'C:/repo/a.ts' })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: /✓ done!/ })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('counters start over at local midnight', async ($, on) => {
   const clock = mock.clock(on)
   mock.store(on)
