@@ -21,7 +21,7 @@ Answer `y` to add the marketplace, then pick a scope (user scope loads it in eve
 
 - **Header bar:** idle or working, uptime, turns and session cost.
 - **Owl:** a pixel-art owl that acts out what Claude is doing. It bobs and flaps while working, twitches its ears when a plan is waiting for you, shakes with red eyes on an error, hops when a plan finishes, and sits still when idle, with a blink or an ear twitch now and then.
-- **Cubeman:** the Catalyx mascot, a white pixel cube with the logo marks on its side. Pick it in ⚙ Settings → MASCOT or with `/pulse mascot cubeman`. It hops while working, looks up with a `?` when a plan waits, shakes on an error, jumps and lands in a burst of colour when a plan finishes, and dozes when idle. Its sprite comes from [catalyx-mascot](https://github.com/eunille/catalyx-mascot) (`hooks/cubeman.ts` is generated there; don't edit it here).
+- **Cubeman:** the Catalyx mascot, a white pixel cube with the logo marks on its side. Pick it in ⚙ Settings → MASCOT or with `/pulse mascot cubeman`. It hops while working, looks up with a `?` when a plan waits, shakes on an error, jumps and lands in a burst of colour when a plan finishes, and dozes when idle. Its sprite comes from [ctx-mascot](https://github.com/eunille/ctx-mascot) (`hooks/cubeman.ts` is generated there; don't edit it here).
 - **Gauges:** context window, 5h and 7d rate limits, tokens and cache hit rate, and an activity sparkline that warms as Claude gets busier.
 - **Running now:** tool calls and subagents in progress, with elapsed time.
 - **Skills:** which skills loaded, how often and when, with all-time counts across sessions.
