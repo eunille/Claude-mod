@@ -227,6 +227,28 @@ test('"good" approves a waiting plan', async ($, on) => {
   expect((await $.tool.call({ tool: PLAN, action: 'start', phase: 1 })).deny).toBeUndefined()
 })
 
+test('a second edit with no plan is turned back once, then goes through', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+  on('prompt.submit', ($, e) => ({ text: e.text, context: e.context }))
+  const edit = () => $.tool.call({ tool: 'Edit', file_path: 'C:/repo/a.ts', old_string: 'a', new_string: 'b' })
+
+  expect((await edit()).deny).toBeUndefined()
+  expect((await edit()).deny).toContain('propose')
+  expect((await edit()).deny).toBeUndefined()
+
+  await $.prompt.submit({ text: 'next task', wait: false, origin: { kind: 'composer' } })
+  expect((await edit()).deny).toBeUndefined()
+  expect((await edit()).deny).toContain('propose')
+
+  await $.tool.call({ tool: PLAN, action: 'propose', title: 'Planned', phases: ['One'] })
+  await $.prompt.submit({ text: 'yes', wait: false, origin: { kind: 'composer' } })
+  await $.tool.call({ tool: PLAN, action: 'start', phase: 1 })
+  expect((await edit()).deny).toBeUndefined()
+  expect((await edit()).deny).toBeUndefined()
+})
+
 test('an answer with changes keeps the plan waiting', async ($, on) => {
   mock.clock(on)
   mock.store(on)

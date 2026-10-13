@@ -21,10 +21,14 @@ const HEDGE = /\b(but|change|instead|except|first|wait|no|not|don't|dont)\b/i
 const HELD =
   'The plan is waiting for the user\'s approval, so file edits are blocked. Stop and ask "Approve this plan?". ' +
   'If the user has moved on to a different request, call the plan tool with action "cancel" first.'
+const NUDGE =
+  'Plan-first is on and this is the second file edit without a plan, so this task looks multi-step. ' +
+  'Call the plan tool with action "propose" and ask "Approve this plan?" before editing. ' +
+  'If it really is one small change, or the user asked to skip planning, repeat this call and it will go through.'
 
 const PLAN_RULE = `# Plan-first workflow (skill-pulse)
 When the user asks for a task that takes several steps (a feature, a refactor, changes across files, a multi-step fix), follow this before changing anything. Skip it for questions, explanations, quick lookups and one-line edits. Subagents ignore this section.
-1. Analyze: read only what you need to understand the task.
+1. Analyze: read only what you need to understand the task. Check the available skills and load each one that fits with the Skill tool (for example superpowers:brainstorming for a new feature, superpowers:systematic-debugging for a bug); skip this when none fits.
 2. Plan: call the \`plan\` tool (${PLAN_TOOL}) with action "propose", a short title and 3-7 phases, each one short imperative line.
 3. Ask: end your turn with the phases as a brief numbered list and the question "Approve this plan?". Do not edit files or run commands that change anything until the user approves.
 4. Execute: once approved, run all phases straight through without pausing. Call plan "start" with the phase number before each phase and "done" after it.
@@ -68,6 +72,8 @@ const fresh = (now: number): PulseStats => ({
   recentCalls: [],
   limits: [],
   alertedContext: 0,
+  unplannedEdits: 0,
+  nudged: false,
 })
 
 const stats = atom({ plugin: 'skill-pulse', key: 'stats' } as const, fresh(0))
@@ -1107,7 +1113,7 @@ export const register: Register = on => {
 
   // An answer to a plan awaiting approval: approve it, or note that it is being revised.
   on('prompt.submit', async ($, e, next) => {
-    const s = await read($, stats)
+    const s = await update($, stats, prev => ({ ...prev, unplannedEdits: 0, nudged: false }))
     if (!isOpen(s.plan)) return next(e)
     const text = e.text.trim()
     const isApproval = text.length <= 40 && APPROVE.test(text) && !HEDGE.test(text)
@@ -1164,9 +1170,22 @@ export const register: Register = on => {
 
     let ran: Awaited<ReturnType<typeof next>> | undefined
     try {
-      // File edits wait while a plan waits for the person's approval.
-      const isHeld = EDIT_TOOLS.has(tool) && isOpen((await read($, stats)).plan) && (await read($, prefs)).planFlow
-      ran = isHeld ? { deny: HELD } : await next(e)
+      // File edits wait while a plan waits for approval; without any plan, the second edit of a prompt is turned back once.
+      let deny: string | undefined
+      if (EDIT_TOOLS.has(tool) && !isSubagent && (await read($, prefs)).planFlow) {
+        await update($, stats, prev => {
+          if (isOpen(prev.plan)) {
+            deny = HELD
+            return prev
+          }
+          if (prev.plan?.status === 'executing') return prev
+          const unplannedEdits = prev.unplannedEdits + 1
+          if (unplannedEdits < 2 || prev.nudged) return { ...prev, unplannedEdits }
+          deny = NUDGE
+          return withEvent({ ...prev, unplannedEdits, nudged: true }, 'plan', 'edits without a plan — nudged to propose one')
+        })
+      }
+      ran = deny ? { deny } : await next(e)
       return ran
     } finally {
       const end = await $.clock.now()

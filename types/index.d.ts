@@ -51,6 +51,9 @@ export type PulseStats = {
   limits: PulseLimit[]
   lastError?: { tool: string; text: string; at: number }
   alertedContext: number
+  /** Main-conversation file edits since the last prompt with no plan running, and whether the plan gate has nudged yet. */
+  unplannedEdits: number
+  nudged: boolean
   plan?: PulsePlan
 }
 
