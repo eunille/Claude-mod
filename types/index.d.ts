@@ -63,6 +63,10 @@ export type PulseStats = {
   plan?: PulsePlan
   /** Finished and cancelled plans, newest first, kept across sessions. */
   history: PulsePlan[]
+  /** The local day the counters belong to; at midnight they start over. dayStart and costBase make uptime and cost today's. */
+  day: string
+  dayStart: number
+  costBase: number
 }
 
 /** powerline: chevron segments (Nerd Font); rounded: pills; plain: no special glyphs. */

@@ -55,6 +55,8 @@ type Pose = {
   dust?: number
   ask: boolean
   z?: number
+  /** How many thinking dots (red, yellow, blue) float above its head. */
+  dots?: number
   ms: number
 }
 
@@ -74,25 +76,44 @@ const pose = (ms: number, o: Partial<Pose> = {}): Pose => ({
 
 // The eyes hold still through every hop and jump: only the body moves, and it blinks once on impact.
 const SCRIPT: Record<Mood, Pose[]> = {
-  idle: [pose(2400), pose(140, { eyes: 'closed' }), pose(1800), pose(140, { eyes: 'closed' })],
-  working: [
-    pose(300),
-    pose(110, { squash: 1 }),
-    pose(100, { squash: -1, lift: 0.35 }),
-    pose(120, { lift: 0.6 }),
-    pose(120, { lift: 0.6 }),
-    pose(100, { squash: -1, lift: 0.35 }),
-    pose(110, { squash: 1 }),
-    pose(500),
-    pose(600, { look: -1 }),
-    pose(300),
-    pose(600, { look: 1 }),
+  idle: [
+    pose(2400),
+    pose(140, { eyes: 'closed' }),
+    pose(1400),
+    pose(700, { look: -1 }),
+    pose(400),
+    pose(700, { look: 1 }),
+    pose(1200),
+    pose(140, { eyes: 'closed' }),
   ],
+  // Working runs three routines in turn: a hop, a think with dots popping up, a lean to look around.
+  working: [
+    pose(250),
+    pose(110, { squash: 1 }),
+    pose(100, { squash: -1, lift: 0.35 }),
+    pose(120, { lift: 0.6 }),
+    pose(120, { lift: 0.6 }),
+    pose(100, { squash: -1, lift: 0.35 }),
+    pose(110, { squash: 1 }),
+    pose(300),
+    pose(300, { up: true, mouth: 'flat', dots: 1 }),
+    pose(300, { up: true, mouth: 'flat', dots: 2 }),
+    pose(500, { up: true, mouth: 'flat', dots: 3 }),
+    pose(250, { mouth: 'flat', dots: 3 }),
+    pose(300),
+    pose(500, { dx: -1, look: -1 }),
+    pose(200),
+    pose(500, { dx: 1, look: 1 }),
+    pose(300),
+  ],
+  // Waiting tilts its head side to side while the question mark blinks.
   waiting: [
     pose(600, { up: true, ask: true }),
-    pose(250, { up: true }),
-    pose(600, { up: true, ask: true }),
+    pose(300, { up: true, dx: -1, ask: true }),
+    pose(300, { up: true }),
     pose(140, { eyes: 'closed', ask: true }),
+    pose(300, { up: true, dx: 1, ask: true }),
+    pose(250, { up: true }),
   ],
   error: [
     pose(70, { dx: -1, eyes: 'shocked', mouth: 'oh', flash: true }),
@@ -218,7 +239,8 @@ function cube(fw: number, fh: number, d: number, p: Pose): Grid {
   // A wide U smile: corners up, a flat bottom between them.
   const mw = fw >= 9 ? (fw % 2 ? 5 : 4) : fw % 2 ? 3 : 4
   const mx = (fw - mw) / 2
-  const my = ey + eh + 1
+  // The mouth sits midway between the cheeks and the bottom edge, not tucked under the eyes.
+  const my = Math.max(ey + eh + 1, Math.floor((ey + eh + fh - 2) / 2))
   const mouth = my + 1 >= fh - 1 ? 'flat' : p.mouth
   for (let x = mx; x < mx + mw; x++) {
     const isInner = x > mx && x < mx + mw - 1
@@ -275,6 +297,10 @@ function draw(size: number, p: Pose): Grid {
     stamp(glyph, x0 + Math.floor(fw / 2) - 1, Math.max(0, y0 - glyph.length))
   }
   if (p.z !== undefined) stamp(ZED, Math.min(size - 3, x0 + fw + p.z), Math.max(0, y0 - 3 - p.z))
+  if (p.dots) {
+    const cx = x0 + Math.floor(fw / 2)
+    for (let i = 0; i < Math.min(3, p.dots); i++) put(cx - 2 + i * 2, Math.max(0, y0 - 2), SPECK_INK[i]!)
+  }
   if (p.dust !== undefined) {
     // Specks fly from the standing cube's bottom corners on a falling arc, land, fade to grey and vanish;
     // a puff of dust slides out along the ground for the first beats. Anchored to the standing cube so

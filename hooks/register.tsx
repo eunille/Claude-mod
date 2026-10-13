@@ -91,6 +91,9 @@ const fresh = (now: number): PulseStats => ({
   unplannedEdits: 0,
   nudged: false,
   history: [],
+  day: '',
+  dayStart: 0,
+  costBase: 0,
 })
 
 const stats = atom({ plugin: 'skill-pulse', key: 'stats' } as const, fresh(0))
@@ -271,8 +274,31 @@ async function paletteFor($: Dollar, theme: PulseTheme): Promise<Palette> {
 
 // ── state helpers ────────────────────────────────────────────────────────────
 
-/** Moves the activity window forward so its last bucket holds `now`. */
+const dayKey = (at: number) => new Date(at).toDateString()
+
+/**
+ * A new local day: the counters start over. The plan, the plan history, all-time skills and the
+ * live context and limits carry on; cost from here on is counted from what it is now.
+ */
+function newDay(s: PulseStats, now: number): PulseStats {
+  const keep = {
+    allTimeSkills: s.allTimeSkills,
+    history: s.history,
+    plan: s.plan,
+    contextPercent: s.contextPercent,
+    contextTokens: s.contextTokens,
+    contextWindow: s.contextWindow,
+    limits: s.limits,
+    alertedContext: s.alertedContext,
+    costUsd: s.costUsd,
+  }
+  return withEvent({ ...fresh(now), ...keep, day: dayKey(now), dayStart: now, costBase: s.costUsd ?? 0 }, 'turn', 'new day — counters start over')
+}
+
+/** Moves the activity window forward so its last bucket holds `now`, and starts a new day at midnight. */
 function roll(s: PulseStats, now: number): PulseStats {
+  if (s.day && s.day !== dayKey(now)) return newDay(s, now)
+  if (!s.day) s = { ...s, day: dayKey(now) }
   const k = Math.floor((now - s.activityAt) / BUCKET_MS)
   if (k <= 0) return { ...s, now }
   const shift = Math.min(k, BUCKETS)
@@ -388,7 +414,8 @@ async function refreshUsage($: Dollar & { session: { usage: () => Promise<any> }
     }
     const updated: PulseStats = {
       ...s,
-      startedAt: u.startedAt || s.startedAt,
+      // Uptime counts from the session's start, or from midnight once a new day has begun.
+      startedAt: Math.max(u.startedAt || s.startedAt, s.dayStart),
       contextPercent: percent,
       contextTokens: u.context.tokens,
       contextWindow: u.context.window,
@@ -539,7 +566,7 @@ function Header(ui: UI, s: PulseStats, W: number) {
     { text: `◷ ${dur(s.now - s.startedAt)}`, bg: P.agent },
     { text: `↻ ${s.turns} turns`, bg: P.tool },
   ]
-  if (s.costUsd !== undefined) list.push({ text: `$${s.costUsd.toFixed(2)}`, bg: P.file })
+  if (s.costUsd !== undefined) list.push({ text: `$${(s.costUsd - s.costBase).toFixed(2)}`, bg: P.file })
   while (list.length > 2 && segsWidth(list) > W) list.pop()
   return Bar(ui, list)
 }
@@ -1150,7 +1177,7 @@ function report(s: PulseStats): string {
   const total = tools.reduce((n, [, t]) => n + t.count, 0)
   const lines = [
     `Pulse report — up ${dur(s.now - s.startedAt)}, ${s.turns} turns, ${total} tool calls` +
-      (s.costUsd !== undefined ? `, $${s.costUsd.toFixed(2)}` : '') +
+      (s.costUsd !== undefined ? `, $${(s.costUsd - s.costBase).toFixed(2)} today` : '') +
       (s.contextPercent !== undefined ? `, context ${s.contextPercent}%` : ''),
     '',
     `Skills: ${skills.length ? skills.map(([n, v]) => `${n} ×${v.count}`).join(', ') : 'none'}`,

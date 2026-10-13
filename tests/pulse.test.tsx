@@ -358,6 +358,23 @@ test('the mascot switches to Cubeman and back', async ($, on) => {
   await ui.unmount()
 })
 
+test('counters start over at local midnight', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+
+  await $.tool.call({ tool: 'Read', file_path: 'C:/repo/a.ts' })
+  await $.tool.call({ tool: 'Read', file_path: 'C:/repo/a.ts' })
+  await clock.advance(24 * 60 * 60 * 1000)
+  await $.tool.call({ tool: 'Read', file_path: 'C:/repo/b.ts' })
+
+  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /1 calls/ })).toBeDefined()
+  await ui.press({ key: 'v-timeline' })
+  expect(await ui.find({ type: 'Text', text: /new day/ })).toBeDefined()
+  await ui.unmount()
+})
+
 test('an answer with changes keeps the plan waiting', async ($, on) => {
   mock.clock(on)
   mock.store(on)
