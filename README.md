@@ -20,7 +20,7 @@ Answer `y` to add the marketplace, then pick a scope (user scope loads it in eve
 ## What it shows
 
 - **Header bar:** idle or working, uptime, turns and session cost.
-- **Owl:** a pixel-art owl that acts out what Claude is doing. It bobs and flaps while working, twitches its ears when a plan is waiting for you, shakes with red eyes on an error, hops when a plan finishes, and breathes slowly when idle.
+- **Owl:** a pixel-art owl that acts out what Claude is doing. It bobs and flaps while working, twitches its ears when a plan is waiting for you, shakes with red eyes on an error, hops when a plan finishes, and sits still when idle, with a blink or an ear twitch now and then.
 - **Gauges:** context window, 5h and 7d rate limits, tokens and cache hit rate, and an activity sparkline that warms as Claude gets busier.
 - **Running now:** tool calls and subagents in progress, with elapsed time.
 - **Skills:** which skills loaded, how often and when, with all-time counts across sessions.

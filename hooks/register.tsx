@@ -575,8 +575,9 @@ function owlMood(s: PulseStats): { mood: OwlMood; pose: OwlPose; caption: string
     const glance = (['look', 'glanceL', 'look', 'glanceR'] as const)[Math.floor(f / 4) % 4] ?? 'look'
     return { mood: f % 14 === 0 ? 'blink' : glance, pose: { ...STILL, dy: f % 2 ? 1 : 2, isFlap: f % 4 === 1 }, caption: 'working', color: P.ok }
   }
-  if (s.now - lastAt > 120_000) return { mood: 'sleep', pose: { ...STILL, dy: tick % 2 ? 1 : 2 }, caption: tick % 2 ? 'z Z z' : 'Z z Z', color: P.muted }
-  return { mood: tick % 9 === 0 ? 'blink' : 'sleepy', pose: { ...STILL, dy: tick % 4 === 0 ? 2 : 1, isTwitch: tick % 7 === 3 }, caption: 'idle', color: P.muted }
+  // Idle and asleep the owl stays put: only a blink or an ear twitch now and then.
+  if (s.now - lastAt > 120_000) return { mood: 'sleep', pose: STILL, caption: tick % 2 ? 'z Z z' : 'Z z Z', color: P.muted }
+  return { mood: tick % 9 === 0 ? 'blink' : 'sleepy', pose: { ...STILL, isTwitch: tick % 7 === 3 }, caption: 'idle', color: P.muted }
 }
 
 /** The owl's column: its canvas, a cell of air each side, and a row of air above. */
