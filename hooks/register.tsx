@@ -20,7 +20,7 @@ const EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit'])
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
 // ponytail: a pattern, not a parser; it misses writes done by scripts and catches a few harmless redirects.
 const SHELL_WRITE =
-  /\bsed\s+-i|\btee\b|\b(?:rm|mv|cp|touch|mkdir)\s|\b(?:Set-Content|Add-Content|Out-File|New-Item|Remove-Item|Move-Item|Copy-Item|Rename-Item)\b|(?:^|[^\d&>])>{1,2}\s*[^\s&|>]/i
+  /\bsed\s+-i|\btee\b|\b(?:rm|mv|cp|touch|mkdir)\s|\b(?:Set-Content|Add-Content|Out-File|New-Item|Remove-Item|Move-Item|Copy-Item|Rename-Item)\b|(?:^|[^\d&>=-])>{1,2}\s*[^\s&|>=]/i
 const SHELL_DISCARD = /\d?>{1,2}\s*(?:\/dev\/null|\$null|nul\b|&\d)/gi
 const CHECK =
   /\b(?:(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+(?:test|lint|typecheck|check|build)|vitest|jest|pytest|tsc|eslint|biome|mypy|ruff|cargo\s+(?:test|check|clippy)|go\s+(?:test|vet)|plugin\s+(?:test|validate)|dotnet\s+test|mvn\s+test|gradlew?\s+test)\b/i
@@ -255,10 +255,23 @@ function segsWidth(list: Seg[]): number {
  * (Catppuccin in its light or dark flavour, the terminal's own colours for any other skin),
  * and is Catppuccin Mocha where it is not, so the pane looks finished with nothing else installed.
  */
+/** The auto palette, looked up at most once a second: the pane redraws several times a second while animating. */
+let autoPalette: { at: number; palette: Palette } | undefined
+const AUTO_PALETTE_MS = 1_000
+
 async function paletteFor($: Dollar, theme: PulseTheme): Promise<Palette> {
   if (theme === 'mocha') return MOCHA
   if (theme === 'latte') return LATTE
   if (theme === 'terminal') return THEMED
+  const now = Date.now()
+  if (autoPalette && now - autoPalette.at < AUTO_PALETTE_MS) return autoPalette.palette
+  const palette = await skinsPalette($)
+  autoPalette = { at: now, palette }
+  return palette
+}
+
+/** Catppuccin in its light or dark flavour while the skins mod wears it, the terminal's own colours for any other skin, Mocha without skins. */
+async function skinsPalette($: Dollar): Promise<Palette> {
   try {
     const skins = (await $.state.get({ plugin: 'skins', key: 'prefs' } as never)) as { value?: { skin?: string } } | undefined
     const skin = skins?.value?.skin
@@ -450,6 +463,37 @@ async function savePrefs($: Dollar, change: Partial<PulsePrefs>): Promise<PulseP
     await $.store.set('prefs', next)
   } catch {}
   return next
+}
+
+/** A load reported twice within this long (Skill tool, then skill.prompt) is counted once. */
+const SKILL_DEDUPE_MS = 5_000
+
+/**
+ * Counts one skill load, from whichever signal arrives: the Skill tool's call, or skill.prompt
+ * (which also covers /commands and preloads). The same skill again within SKILL_DEDUPE_MS is the
+ * same load reported twice.
+ */
+async function recordSkill($: Dollar, name: string): Promise<void> {
+  if (!name) return
+  const now = await $.clock.now()
+  let isNew = false
+  const s = await update($, stats, prev => {
+    if (prev.lastSkill?.name === name && now - prev.lastSkill.at < SKILL_DEDUPE_MS) return prev
+    isNew = true
+    const st = roll(prev, now)
+    const k = st.skills[name] ?? { count: 0, lastAt: now }
+    const allTimeSkills = { ...st.allTimeSkills, [name]: (st.allTimeSkills[name] ?? 0) + 1 }
+    return withEvent(
+      { ...st, skills: { ...st.skills, [name]: { count: k.count + 1, lastAt: now } }, allTimeSkills, lastSkill: { name, at: now } },
+      'skill',
+      `skill loaded  ${name}`,
+    )
+  })
+  if (!isNew) return
+  try {
+    await $.store.set('allTimeSkills', s.allTimeSkills)
+  } catch {}
+  $.ui.status(statusText(s))
 }
 
 const APPROVED_CONTEXT =
@@ -702,7 +746,7 @@ function Settings(ui: UI, $: Dollar, p: PulsePrefs) {
           key="reset"
           plain
           hotkey="r"
-          onPress={() => update($, stats, s => ({ ...fresh(s.now), allTimeSkills: s.allTimeSkills, startedAt: s.startedAt, plan: s.plan, history: s.history }))}
+          onPress={() => update($, stats, s => ({ ...newDay(s, s.now), timeline: [] }))}
         >
           {pill(ui, '↺ reset counters', P.surface, P.fg)}
         </Button>,
@@ -1222,17 +1266,25 @@ export const register: Register = on => {
     // While the mascot has something to act out, every FRAME_MS (owl) or CUBE_FRAME_MS (Cubeman); every TICK_MS otherwise.
     let lastDrawAt = 0
     let lastUsageAt = 0
+    let lastStatus = ''
+    // Half a tick of slack: the time is read after an await, so 499 ms must still count as 500.
+    const isDue = (t: number, interval: number) => t - lastDrawAt >= interval - CUBE_FRAME_MS / 2
     $.clock.every(CUBE_FRAME_MS, () => {
       void (async () => {
         const t = await $.clock.now()
-        const p = await read($, prefs)
-        const isCube = p.owl && p.mascot === 'cubeman'
-        const interval = !isLively(await read($, stats)) ? TICK_MS : isCube ? CUBE_FRAME_MS : FRAME_MS
-        // Half a tick of slack: the time is read after an await, so 499 ms must still count as 500.
-        if (t - lastDrawAt < interval - CUBE_FRAME_MS / 2) return
+        // Cheapest test first: the slow idle redraw needs no state at all; faster ones only while lively.
+        if (!isDue(t, TICK_MS)) {
+          if (!isDue(t, CUBE_FRAME_MS) || !isLively(await read($, stats))) return
+          const p = await read($, prefs)
+          if (!isDue(t, p.owl && p.mascot === 'cubeman' ? CUBE_FRAME_MS : FRAME_MS)) return
+        }
         lastDrawAt = t
         const s = await update($, stats, prev => roll(prev, t))
-        $.ui.status(statusText(s))
+        const status = statusText(s)
+        if (status !== lastStatus) {
+          lastStatus = status
+          $.ui.status(status)
+        }
         if (t - lastUsageAt >= USAGE_EVERY_MS) {
           lastUsageAt = t
           await refreshUsage($)
@@ -1254,7 +1306,7 @@ export const register: Register = on => {
   on('command.run', { command: 'pulse' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase()
     if (arg === 'reset') {
-      await update($, stats, s => ({ ...fresh(s.now), allTimeSkills: s.allTimeSkills, startedAt: s.startedAt, plan: s.plan, history: s.history }))
+      await update($, stats, s => ({ ...newDay(s, s.now), timeline: [] }))
       return { text: 'Pulse counters reset.' }
     }
     if (arg === 'report') return { text: report(await read($, stats)) }
@@ -1366,6 +1418,8 @@ export const register: Register = on => {
         })
       }
       ran = deny ? { deny } : await next(e)
+      // A skill loaded through the Skill tool: counted here, since skill.prompt does not always follow.
+      if (tool === 'Skill' && !deny && ran.isError !== true && typeof args.skill === 'string') await recordSkill($, args.skill)
       return ran
     } finally {
       const end = await $.clock.now()
@@ -1489,23 +1543,7 @@ export const register: Register = on => {
   })
 
   on('skill.prompt', async ($, e, next) => {
-    const now = await $.clock.now()
-    let allTime: Record<string, number> | undefined
-    try {
-      const stored = ((await $.store.get('allTimeSkills')) ?? {}) as Record<string, number>
-      allTime = { ...stored, [e.skill]: (stored[e.skill] ?? 0) + 1 }
-      await $.store.set('allTimeSkills', allTime)
-    } catch {}
-    const s = await update($, stats, prev => {
-      const s = roll(prev, now)
-      const k = s.skills[e.skill] ?? { count: 0, lastAt: now }
-      return withEvent(
-        { ...s, skills: { ...s.skills, [e.skill]: { count: k.count + 1, lastAt: now } }, allTimeSkills: allTime ?? s.allTimeSkills },
-        'skill',
-        `skill loaded  ${e.skill}`,
-      )
-    })
-    $.ui.status(statusText(s))
+    await recordSkill($, e.skill)
     return next(e)
   })
 

@@ -239,8 +239,22 @@ function toBase64(bytes: Uint8Array): string {
   return out
 }
 
+/** Every encoded owl, by colourway, then mood and pose: a handful of poses repeat, so each is built once. */
+const built = new WeakMap<OwlColors, Map<string, string>>()
+
 /** The owl in a mood and pose, as a Raster's `cells`. */
 export function owlCells(mood: OwlMood, colors: OwlColors, pose: OwlPose = STILL): string {
+  let byPose = built.get(colors)
+  if (!byPose) built.set(colors, (byPose = new Map()))
+  const key = `${mood}|${pose.dx}|${pose.dy}|${pose.isFlap ? 1 : 0}|${pose.isTwitch ? 1 : 0}`
+  const hit = byPose.get(key)
+  if (hit !== undefined) return hit
+  const cells = buildCells(mood, colors, pose)
+  byPose.set(key, cells)
+  return cells
+}
+
+function buildCells(mood: OwlMood, colors: OwlColors, pose: OwlPose): string {
   const palette: Record<string, number> = {
     M: rgb(colors.body),
     L: rgb(colors.wing),

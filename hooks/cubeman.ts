@@ -379,8 +379,21 @@ export function cellSize(grid: Grid): { columns: number; rows: number } {
   return { columns: grid[0]?.length ?? 0, rows: Math.ceil(grid.length / 2) }
 }
 
-/** A grid as a terminal Raster's `cells`: each cell a ▀ or ▄ carrying two stacked pixels. */
+/** Frames are cached and shared, so the same grid in the same palette always encodes to the same cells. */
+const encoded = new WeakMap<Grid, WeakMap<Palette, string>>()
+
+/** A grid as a terminal Raster's `cells`: each cell a ▀ or ▄ carrying two stacked pixels. Encoded once per grid and palette. */
 export function toCells(grid: Grid, palette: Palette): string {
+  let byPalette = encoded.get(grid)
+  if (!byPalette) encoded.set(grid, (byPalette = new WeakMap()))
+  const hit = byPalette.get(palette)
+  if (hit !== undefined) return hit
+  const cells = encode(grid, palette)
+  byPalette.set(palette, cells)
+  return cells
+}
+
+function encode(grid: Grid, palette: Palette): string {
   const { columns, rows } = cellSize(grid)
   const color = (k: Key | undefined) => (k === undefined || k === '.' ? undefined : hexToRgb(palette[k]))
   const view = new DataView(new ArrayBuffer(columns * rows * 12))

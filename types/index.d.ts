@@ -67,6 +67,8 @@ export type PulseStats = {
   day: string
   dayStart: number
   costBase: number
+  /** The last skill counted and when: the Skill tool and skill.prompt can both report one load. */
+  lastSkill?: { name: string; at: number }
 }
 
 /** powerline: chevron segments (Nerd Font); rounded: pills; plain: no special glyphs. */

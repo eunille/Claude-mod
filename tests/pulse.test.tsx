@@ -324,6 +324,35 @@ test('shell writes count as edits, discarded output does not', async ($, on) => 
   expect((await $.tool.call({ tool: 'Bash', command: "sed -i 's/a/b/' src/a.ts" })).deny).toContain('propose')
 })
 
+test('a skill loaded by the Skill tool shows in SKILLS, once even when skill.prompt also fires', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+  on('skill.prompt', ($, e) => ({ text: e.text }))
+
+  // The Skill tool alone, as in a live session where skill.prompt never arrives.
+  await $.tool.call({ tool: 'Skill', skill: 'superpowers:brainstorming' })
+  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /1 used this session/ })).toBeDefined()
+
+  // When skill.prompt does follow for the same load, it isn't counted a second time.
+  await $.skill.prompt({ skill: 'superpowers:brainstorming', text: 'brainstorm' })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: /all-time 1/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('arrows in inline scripts are not file writes', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+
+  const run = (command: string) => $.tool.call({ tool: 'PowerShell', command })
+  expect((await run('node -e "[1].map(r=>r)"')).deny).toBeUndefined()
+  expect((await run("node -e 'a->b; x => y'")).deny).toBeUndefined()
+  expect((await run('if (a >= b) { echo ok }')).deny).toBeUndefined()
+})
+
 test('the owl moves between poses', () => {
   const colors = OWLS.night.dark
   const still = owlCells('look', colors)
