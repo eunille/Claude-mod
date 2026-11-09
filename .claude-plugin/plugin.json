@@ -1,11 +1,11 @@
 {
-  "name": "skill-pulse",
-  "version": "0.6.1",
+  "name": "cubeman",
+  "version": "0.7.0",
   "author": { "name": "eunille", "url": "https://github.com/eunille" },
-  "description": "Live Pulse pane for Claude Code: skills, tools, subagents, context, tokens and activity, an owl that shows what Claude is doing, and a plan-first workflow that waits for your approval.",
+  "description": "Cubeman for Claude Code: a live pane of skills, tools, subagents, context, tokens and activity, a pixel mascot that acts out what Claude is doing (classic, or Arbitrage with guns and zombie waves), and a plan-first workflow that waits for your approval.",
   "homepage": "https://github.com/eunille/Claude-mod",
   "repository": "https://github.com/eunille/Claude-mod",
   "license": "MIT",
-  "keywords": ["claude-code-mods", "function-hooks", "monitor", "dashboard", "plan", "catppuccin"],
+  "keywords": ["claude-code-mods", "function-hooks", "monitor", "dashboard", "plan", "mascot", "catppuccin"],
   "types": "./types/index.d.ts"
 }

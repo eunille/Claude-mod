@@ -1,6 +1,6 @@
-# skill-cubehub
+# Cubeman
 
-A live **Pulse** pane for Claude Code. It shows what Claude is doing while it works, including which skills and tools it uses, plus a plan-first workflow where Claude waits for your approval before it executes.
+A live **Cubeman** pane for Claude Code, formerly skill-pulse. It shows what Claude is doing while it works, including which skills and tools it uses, plus a plan-first workflow where Claude waits for your approval before it executes.
 
 <img width="693" height="626" alt="image" src="https://github.com/user-attachments/assets/7ec6d31a-133e-401d-8e09-90faa13a6852" />
 
@@ -12,16 +12,32 @@ A live **Pulse** pane for Claude Code. It shows what Claude is doing while it wo
 In Claude Code, run:
 
 ```
-/plugin install skill-pulse --marketplace eunille/Claude-mod
+/plugin install cubeman --marketplace eunille/Claude-mod
 ```
 
-Answer `y` to add the marketplace, then pick a scope (user scope loads it in every session). The pane opens by itself on a wide terminal; type `/pulse` to open it on a narrower one.
+Answer `y` to add the marketplace, then pick a scope (user scope loads it in every session). The pane opens by itself on a wide terminal; type `/cubeman` to open it on a narrower one.
+
+### Upgrading from skill-pulse
+
+The plugin was renamed, so install it under its new name once:
+
+```
+/plugin marketplace update eunille-mods
+/plugin uninstall skill-pulse@eunille-mods
+/plugin install cubeman@eunille-mods
+```
+
+Then restart Claude Code. The command is now `/cubeman` and the plan tool is `mcp__cubeman__plan`. Your settings, plan history and all-time skill counts are kept under the plugin's name, so copy them across before the first start: in `~/.claude/plugins/store/`, copy `skill-pulse_eunille-mods-69f18ef4cc3a.json` to `cubeman_eunille-mods-f3b7ea64de3c.json`.
 
 ## What it shows
 
 - **Header bar:** idle or working, uptime, turns and cost. Counters start over at local midnight, so uptime, turns, tokens and cost are today's; context and rate limits stay live.
 - **Owl:** a pixel-art owl that acts out what Claude is doing. It bobs and flaps while working, twitches its ears when a plan is waiting for you, shakes with red eyes on an error, hops when a plan finishes, and sits still when idle, with a blink or an ear twitch now and then.
-- **Cubeman (default):** the Catalyx mascot, a white pixel cube with the logo marks on its side. Switch to the owl, or turn the mascot off, in ⚙ Settings → MASCOT or with `/pulse mascot owl|cubeman|off`. It hops while working, looks up with a `?` when a plan waits, shakes on an error, jumps and lands in a burst of colour when a plan finishes, and dozes when idle. Its sprite comes from [ctx-mascot](https://github.com/eunille/ctx-mascot) (`hooks/cubeman.ts` is generated there; don't edit it here).
+- **Cubeman (default):** the Catalyx mascot, a white pixel cube with the logo marks on its side, in its own band across the top of the pane. Switch to the owl, or turn the mascot off, in ⚙ Settings → MASCOT or with `/cubeman mascot owl|cubeman|off`. Pick how it moves under ⚙ Settings → ANIMATION or with `/cubeman animation classic|arbitrage`:
+  - **classic** (default): it hops while working, looks up with a `?` when a plan waits, shakes on an error, jumps and lands in a burst of colour when a plan finishes, and dozes when idle.
+  - **arbitrage**: a red bandana, parked at the right end of the band. Each prompt hands it a random gun (pistol, shotgun or blaster), and it holds fire until each wave of viruses and zombies walks up close, then shoots in bursts: tracers 3 then 2 from the pistol, a pumped 3-pellet spread from the shotgun, charged blue bolts from the blaster. While a plan waits, three guns pop up over its head and it picks the one for the task. An error flushes it red while it reloads; a finished task gets a jump with the gun spinning, two shots into the air, a wink and a smoking barrel, in confetti. Idle it stands guard; asleep, the bandana is a sleep mask.
+
+  Its sprites come from [ctx-mascot](https://github.com/eunille/ctx-mascot) (`hooks/cubeman.ts` is generated there; don't edit it here).
 - **Gauges:** context window, 5h and 7d rate limits, tokens and cache hit rate, and an activity sparkline that warms as Claude gets busier.
 - **Running now:** tool calls and subagents in progress, with elapsed time.
 - **Skills:** which skills loaded, how often and when, with all-time counts across sessions.
@@ -49,6 +65,8 @@ Open the **⚙** tab (press `5`, or click it):
 | Row | Choices |
 |---|---|
 | Theme | auto · mocha · latte · terminal |
+| Mascot | owl · cubeman · off |
+| Animation | classic · arbitrage (Cubeman only) |
 | Owl | night · barn · snowy · lilac · off |
 | Style | powerline · rounded · plain |
 | Plan workflow | on · off |
@@ -56,11 +74,11 @@ Open the **⚙** tab (press `5`, or click it):
 
 Press `o` beside the owl to cycle its colours. Your choices are kept across sessions.
 
-Commands do the same: `/pulse`, `/pulse report`, `/pulse reset`, `/pulse style <powerline|rounded|plain>`, `/pulse owl <night|barn|snowy|lilac|off>`.
+Commands do the same: `/cubeman`, `/cubeman report`, `/cubeman reset`, `/cubeman style <powerline|rounded|plain>`, `/cubeman mascot <owl|cubeman|off>`, `/cubeman animation <classic|arbitrage>`, `/cubeman owl <night|barn|snowy|lilac|off>`.
 
 ## What installs, and what doesn't
 
-**Included in the one install line:** the whole Pulse pane, the owl in all four colourways, the Settings tab, the plan workflow, and the Catppuccin theme. With nothing else installed, the pane draws in Catppuccin Mocha. Switch to Latte or your terminal's own colours under ⚙ Settings → THEME.
+**Included in the one install line:** the whole Cubeman pane, the owl in all four colourways, the Settings tab, the plan workflow, and the Catppuccin theme. With nothing else installed, the pane draws in Catppuccin Mocha. Switch to Latte or your terminal's own colours under ⚙ Settings → THEME.
 
 **Optional extras, installed separately:**
 
@@ -86,7 +104,7 @@ Everything stays on your machine. The pane reads Claude Code's own events, store
 ## Uninstall
 
 ```
-/plugin uninstall skill-pulse
+/plugin uninstall cubeman
 ```
 
 ## License

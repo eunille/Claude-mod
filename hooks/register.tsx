@@ -1,15 +1,15 @@
 import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface, Register } from 'claude-code'
 
-import type { PulseEventKind, PulseMascot, PulsePhase, PulsePlan, PulsePrefs, PulseStats, PulseStyle, PulseTheme, PulseView } from '../types'
-import { DARK as CUBE_DARK, frameAt, LIGHT as CUBE_LIGHT, TERMINAL_SIZE, toCells } from './cubeman'
+import type { CubeEventKind, CubeMascot, CubePhase, CubePlan, CubePrefs, CubeStats, CubeStyle, CubeTheme, CubeView } from '../types'
+import { arbitrage, ARBITRAGE_HEIGHT, DARK as CUBE_DARK, frameAt, LIGHT as CUBE_LIGHT, pickWeapon, TERMINAL_SIZE, toCells } from './cubeman'
 import type { Mood as CubeMood } from './cubeman'
 import { OWL_COLORWAYS, OWL_COLUMNS, OWL_ROWS, OWLS, owlCells, STILL } from './owl'
 import type { OwlMood, OwlPose } from './owl'
 
-const PANE = 'skill-pulse'
-const TITLE = 'Pulse'
-const PLAN_TOOL = 'mcp__skill-pulse__plan'
+const PANE = 'cubeman'
+const TITLE = 'Cubeman'
+const PLAN_TOOL = 'mcp__cubeman__plan'
 const BUCKET_MS = 10_000
 const BUCKETS = 48
 const TICK_MS = 2_000
@@ -28,6 +28,10 @@ const HISTORY_MAX = 20
 const FRAME_MS = 500
 /** Cubeman's jump has short frames: redraw this often while it is lively, and stretch every frame to at least this. */
 const CUBE_FRAME_MS = 150
+/** Arbitrage's bullets and waves move on a clock of their own: redraw this often while it is lively. */
+const ARBITRAGE_FRAME_MS = 100
+/** How often the redraw timer wakes; each wake costs one subtraction unless a redraw is due. */
+const WAKE_MS = 50
 const USAGE_EVERY_MS = 10_000
 const APPROVE = /^(y|yes|yep|yeah|ok|okay|sure|approve|approved|go|go ahead|proceed|continue|lgtm|ship it|do it|good|great|perfect|nice|sounds good|looks good)\b/i
 const HEDGE = /\b(but|change|instead|except|first|wait|no|not|don't|dont)\b/i
@@ -42,7 +46,7 @@ const UNCHECKED =
   'Files changed after the last passing test, typecheck or lint run. Run the project\'s checks now, fix what fails, then mark this phase done. ' +
   'If this task has nothing to check (docs, config), repeat this call and it will go through.'
 
-const PLAN_RULE = `# Plan-first workflow (skill-pulse)
+const PLAN_RULE = `# Plan-first workflow (cubeman)
 When the user asks for a task that takes several steps (a feature, a refactor, changes across files, a multi-step fix), follow this before changing anything. Skip it for questions, explanations, quick lookups and one-line edits. Subagents ignore this section.
 1. Analyze: read only what you need to understand the task. Check the available skills and load each one that fits with the Skill tool (for example superpowers:brainstorming for a new feature, superpowers:systematic-debugging for a bug); skip this when none fits.
 2. Plan: call the \`plan\` tool (${PLAN_TOOL}) with action "propose", a short title and 3-7 phases, each one short imperative line.
@@ -50,7 +54,7 @@ When the user asks for a task that takes several steps (a feature, a refactor, c
 4. Execute: once approved, run all phases straight through without pausing. Call plan "start" with the phase number before each phase and "done" after it.
 If the user asks for changes, call "propose" again with the revised phases and ask again. If they move on to something else, call "cancel".`
 
-const PLAN_TOOL_DESCRIPTION = `Records the plan for a multi-step task and tracks its phases in the user's Pulse monitor pane.
+const PLAN_TOOL_DESCRIPTION = `Records the plan for a multi-step task and tracks its phases in the user's Cubeman pane.
 - propose { title, phases }: show a plan for approval. Afterwards stop, list the phases briefly and ask "Approve this plan?". File edits are blocked until the user approves.
 - start { phase } / done { phase }: mark a phase (1-based) of the approved plan as begun or finished.
 - cancel: drop the plan (the user moved on).`
@@ -66,7 +70,7 @@ const PLAN_SCHEMA = {
   required: ['action'],
 }
 
-const fresh = (now: number): PulseStats => ({
+const fresh = (now: number): CubeStats => ({
   startedAt: now,
   now,
   isBusy: false,
@@ -97,10 +101,10 @@ const fresh = (now: number): PulseStats => ({
   turnWork: 0,
 })
 
-const stats = atom({ plugin: 'skill-pulse', key: 'stats' } as const, fresh(0))
-const view = atom({ plugin: 'skill-pulse', key: 'view' } as const, 'overview' as PulseView)
-const DEFAULT_PREFS: PulsePrefs = { style: 'powerline', owl: true, owlColor: 'night', mascot: 'cubeman', planFlow: true, theme: 'auto' }
-const prefs = atom({ plugin: 'skill-pulse', key: 'prefs' } as const, DEFAULT_PREFS)
+const stats = atom({ plugin: 'cubeman', key: 'stats' } as const, fresh(0))
+const view = atom({ plugin: 'cubeman', key: 'view' } as const, 'overview' as CubeView)
+const DEFAULT_PREFS: CubePrefs = { style: 'powerline', owl: true, owlColor: 'night', mascot: 'cubeman', animation: 'classic', planFlow: true, theme: 'auto' }
+const prefs = atom({ plugin: 'cubeman', key: 'prefs' } as const, DEFAULT_PREFS)
 
 type Dollar = EngineInterface
 type UI = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'>
@@ -193,7 +197,7 @@ const THEMED: Palette = {
 
 /** Set at the top of each draw, before any tree is built; the helpers below read them. */
 let P: Palette = MOCHA
-let STYLE: PulseStyle = 'powerline'
+let STYLE: CubeStyle = 'powerline'
 
 // ── powerline primitives ─────────────────────────────────────────────────────
 
@@ -260,7 +264,7 @@ function segsWidth(list: Seg[]): number {
 let autoPalette: { at: number; palette: Palette } | undefined
 const AUTO_PALETTE_MS = 1_000
 
-async function paletteFor($: Dollar, theme: PulseTheme): Promise<Palette> {
+async function paletteFor($: Dollar, theme: CubeTheme): Promise<Palette> {
   if (theme === 'mocha') return MOCHA
   if (theme === 'latte') return LATTE
   if (theme === 'terminal') return THEMED
@@ -294,7 +298,7 @@ const dayKey = (at: number) => new Date(at).toDateString()
  * A new local day: the counters start over. The plan, the plan history, all-time skills and the
  * live context and limits carry on; cost from here on is counted from what it is now.
  */
-function newDay(s: PulseStats, now: number): PulseStats {
+function newDay(s: CubeStats, now: number): CubeStats {
   const keep = {
     allTimeSkills: s.allTimeSkills,
     history: s.history,
@@ -310,7 +314,7 @@ function newDay(s: PulseStats, now: number): PulseStats {
 }
 
 /** Moves the activity window forward so its last bucket holds `now`, and starts a new day at midnight. */
-function roll(s: PulseStats, now: number): PulseStats {
+function roll(s: CubeStats, now: number): CubeStats {
   if (s.day && s.day !== dayKey(now)) return newDay(s, now)
   if (!s.day) s = { ...s, day: dayKey(now) }
   const k = Math.floor((now - s.activityAt) / BUCKET_MS)
@@ -324,7 +328,7 @@ function roll(s: PulseStats, now: number): PulseStats {
   }
 }
 
-function withEvent(s: PulseStats, kind: PulseEventKind, text: string): PulseStats {
+function withEvent(s: CubeStats, kind: CubeEventKind, text: string): CubeStats {
   return { ...s, timeline: [...s.timeline, { at: s.now, kind, text }].slice(-TIMELINE_MAX) }
 }
 
@@ -381,10 +385,10 @@ function filePathOf(tool: string, a: Record<string, unknown>): string | undefine
 const newTokens = (u: { input_tokens: number; output_tokens: number; cache_creation_input_tokens: number }) =>
   u.input_tokens + u.output_tokens + u.cache_creation_input_tokens
 
-const isOpen = (plan: PulsePlan | undefined) => plan?.status === 'awaiting' || plan?.status === 'revising'
+const isOpen = (plan: CubePlan | undefined) => plan?.status === 'awaiting' || plan?.status === 'revising'
 
 /** Ends the active phase (if any) and starts phase `index`. */
-function startPhase(phases: PulsePhase[], index: number, now: number): PulsePhase[] {
+function startPhase(phases: CubePhase[], index: number, now: number): CubePhase[] {
   return phases.map((p, i) => {
     if (i === index) return { ...p, status: 'active', startedAt: p.startedAt ?? now, endedAt: undefined }
     if (p.status === 'active') return { ...p, status: 'done', endedAt: now }
@@ -398,13 +402,13 @@ const isCheck = (tool: string, a: Record<string, unknown>) => CHECK.test(command
 const isCommit = (tool: string, a: Record<string, unknown>) => /\bgit\s+(?:commit|push)\b/.test(commandOf(tool, a))
 
 /** Ends the plan as done or cancelled and files it in the history, newest first. */
-function endPlan(s: PulseStats, status: 'done' | 'cancelled', now: number): PulseStats {
+function endPlan(s: CubeStats, status: 'done' | 'cancelled', now: number): CubeStats {
   if (!s.plan) return s
-  const ended: PulsePlan = { ...s.plan, status, endedAt: s.plan.endedAt ?? now }
+  const ended: CubePlan = { ...s.plan, status, endedAt: s.plan.endedAt ?? now }
   return { ...s, plan: ended, history: [ended, ...s.history].slice(0, HISTORY_MAX) }
 }
 
-async function saveHistory($: Dollar, s: PulseStats): Promise<void> {
+async function saveHistory($: Dollar, s: CubeStats): Promise<void> {
   try {
     await $.store.set('history', s.history)
   } catch {}
@@ -427,7 +431,7 @@ async function refreshUsage($: Dollar & { session: { usage: () => Promise<any> }
         }
       }
     }
-    const updated: PulseStats = {
+    const updated: CubeStats = {
       ...s,
       // Uptime counts from the session's start, or from midnight once a new day has begun.
       startedAt: Math.max(u.startedAt || s.startedAt, s.dayStart),
@@ -443,10 +447,10 @@ async function refreshUsage($: Dollar & { session: { usage: () => Promise<any> }
   if (alert) $.ui.toast(`⚠ ${alert}`)
 }
 
-function statusText(s: PulseStats): string {
+function statusText(s: CubeStats): string {
   const calls = Object.values(s.tools).reduce((n, t) => n + t.count, 0)
   const latest = Object.entries(s.skills).sort((a, b) => b[1].lastAt - a[1].lastAt)[0]?.[0]
-  const parts = [s.isBusy ? '◉ pulse' : '○ pulse']
+  const parts = [s.isBusy ? '◉ cubeman' : '○ cubeman']
   if (s.plan && s.plan.status !== 'cancelled') {
     const done = s.plan.phases.filter(p => p.status === 'done').length
     parts.push(isOpen(s.plan) ? '▤ plan awaiting approval' : `▤ ${done}/${s.plan.phases.length}`)
@@ -459,7 +463,7 @@ function statusText(s: PulseStats): string {
 }
 
 /** Changes the person's display choices and keeps them for the next session. */
-async function savePrefs($: Dollar, change: Partial<PulsePrefs>): Promise<PulsePrefs> {
+async function savePrefs($: Dollar, change: Partial<CubePrefs>): Promise<CubePrefs> {
   const next = await update($, prefs, current => ({ ...current, ...change }))
   try {
     await $.store.set('prefs', next)
@@ -580,13 +584,13 @@ const limitLabel = (kind: string) =>
     .replace(/_/g, ' ')
     .trim()
 
-const ago = (s: PulseStats, at: number) => (s.now - at < 5000 ? 'now' : `${dur(s.now - at)} ago`)
+const ago = (s: CubeStats, at: number) => (s.now - at < 5000 ? 'now' : `${dur(s.now - at)} ago`)
 const pctColor = (p: number) => (p >= 80 ? P.err : p >= 60 ? P.warn : P.ok)
 const clip = (t: string, w: number) => (t.length > w ? `${t.slice(0, Math.max(0, w - 1))}…` : t.padEnd(w))
 const clock = (at: number) => new Date(at).toTimeString().slice(0, 8)
 
-const GLYPH: Record<PulseEventKind, string> = { skill: '✦', tool: '•', agent: '◈', error: '✖', turn: '◇', alert: '⚠', plan: '▤' }
-const kindColor = (k: PulseEventKind) =>
+const GLYPH: Record<CubeEventKind, string> = { skill: '✦', tool: '•', agent: '◈', error: '✖', turn: '◇', alert: '⚠', plan: '▤' }
+const kindColor = (k: CubeEventKind) =>
   ({ skill: P.skill, tool: P.tool, agent: P.agent, error: P.err, turn: P.muted, alert: P.warn, plan: P.plan })[k]
 
 // ── drawing ──────────────────────────────────────────────────────────────────
@@ -603,11 +607,11 @@ function Section(ui: UI, title: string, note?: string, color: string = P.accent)
 }
 
 /** The oh-my-posh bar: name, state, uptime, turns, cost; the least needed segments drop first. */
-function Header(ui: UI, s: PulseStats, W: number) {
+function Header(ui: UI, s: CubeStats, W: number) {
   const frame = SPINNER[Math.floor(s.now / TICK_MS) % SPINNER.length]
   const state: Seg = s.isBusy ? { text: `${frame} working`, bg: P.ok } : { text: '○ idle', bg: P.surface, fg: P.muted }
   const list: Seg[] = [
-    { text: '◉ PULSE', bg: P.accent, bold: true },
+    { text: '◉ CUBEMAN', bg: P.accent, bold: true },
     state,
     { text: `◷ ${dur(s.now - s.startedAt)}`, bg: P.agent },
     { text: `↻ ${s.turns} turns`, bg: P.tool },
@@ -624,14 +628,14 @@ const CELEBRATE_MS = 4_500
  * When the current celebration began, if one is on: a plan finished in the last minute, or, while
  * nothing else is running, a turn that changed files or committed in the last few seconds.
  */
-function celebrationStart(s: PulseStats): number | undefined {
+function celebrationStart(s: CubeStats): number | undefined {
   if (s.plan?.status === 'done' && s.now - (s.plan.endedAt ?? 0) < 60_000) return s.plan.endedAt ?? s.now
   if (!s.isBusy && s.celebrateAt !== undefined && s.now - s.celebrateAt < CELEBRATE_MS) return s.celebrateAt
   return undefined
 }
 
 /** Whether the owl has something to act out, and so redraws every FRAME_MS rather than every TICK_MS. */
-function isLively(s: PulseStats): boolean {
+function isLively(s: CubeStats): boolean {
   return (
     s.isBusy ||
     s.running.length > 0 ||
@@ -645,7 +649,7 @@ function isLively(s: PulseStats): boolean {
  * What the owl shows: an error first, then a plan waiting, a plan just done, work, idleness.
  * Eyes change per mood; the pose moves the body: a shake, a twitch, a hop, a bob and flap, a breath.
  */
-function owlMood(s: PulseStats): { mood: OwlMood; pose: OwlPose; cube: CubeMood; since?: number; caption: string; color: string } {
+function owlMood(s: CubeStats): { mood: OwlMood; pose: OwlPose; cube: CubeMood; since?: number; caption: string; color: string } {
   const f = Math.floor(s.now / FRAME_MS)
   const tick = Math.floor(s.now / TICK_MS)
   const lastAt = s.timeline[s.timeline.length - 1]?.at ?? s.startedAt
@@ -675,10 +679,45 @@ function owlMood(s: PulseStats): { mood: OwlMood; pose: OwlPose; cube: CubeMood;
 const OWL_BOX = Math.max(OWL_COLUMNS, TERMINAL_SIZE) + 2
 /** Cubeman's own words where the owl's are owlish. */
 const CUBE_CAPTION: Partial<Record<CubeMood, string>> = { waiting: '? approve', done: '✓ done!' }
+/** The Arbitrage cube's words: working adds its gun and its kill count. */
+const ARBITRAGE_CAPTION: Partial<Record<CubeMood, string>> = { waiting: '? picking a gun · approve', error: '!! reloading', done: '✓ done!' }
 
 type RasterElement = Elements['terminal']['Raster']
 
-function Owl(ui: UI, $: Dollar, Raster: RasterElement, s: PulseStats, p: PulsePrefs) {
+/**
+ * The Arbitrage scene keeps its enemies and bullets between draws. ponytail: one per module, so a second
+ * Cubeman pane open at once would share it; a reload starts it over, which only restarts the animation.
+ */
+const scene = arbitrage()
+
+/** The mascot's own band across the top of the pane: Arbitrage spans it, the classic cube and the owl stand at its right end. */
+function Mascot(ui: UI, $: Dollar, Raster: RasterElement, s: CubeStats, p: CubePrefs, W: number) {
+  const { Box, Text } = ui
+  const m = owlMood(s)
+  if (p.mascot === 'cubeman' && p.animation === 'arbitrage') {
+    const weapon = s.weapon ?? 'pistol'
+    const since = m.cube === 'error' ? s.lastError?.at : m.since
+    const f = scene.draw({ mood: m.cube, now: s.now, width: W, weapon, since })
+    const caption = m.cube === 'working' ? `working · ${weapon} · ✖ ${f.kills}` : (ARBITRAGE_CAPTION[m.cube] ?? m.caption)
+    return (
+      <Box flexDirection="column" width={W} marginTop={1}>
+        <Raster key="arbitrage" columns={W} rows={ARBITRAGE_HEIGHT / 2} cells={toCells(f.grid, P.isLight ? CUBE_LIGHT : CUBE_DARK)} />
+        <Box justifyContent="flex-end" paddingRight={4}>
+          <Text color={m.color} wrap="truncate-end">
+            {caption}
+          </Text>
+        </Box>
+      </Box>
+    )
+  }
+  return (
+    <Box width={W} justifyContent="flex-end" paddingRight={2}>
+      {Owl(ui, $, Raster, s, p)}
+    </Box>
+  )
+}
+
+function Owl(ui: UI, $: Dollar, Raster: RasterElement, s: CubeStats, p: CubePrefs) {
   const { Box, Button, Text } = ui
   const m = owlMood(s)
   const colors = OWLS[p.owlColor][P.isLight ? 'light' : 'dark']
@@ -709,9 +748,9 @@ function Owl(ui: UI, $: Dollar, Raster: RasterElement, s: PulseStats, p: PulsePr
 }
 
 /** Display choices as rows of pills: the current one filled, a press applies and keeps it. */
-function Settings(ui: UI, $: Dollar, p: PulsePrefs) {
+function Settings(ui: UI, $: Dollar, p: CubePrefs) {
   const { Box, Button, Text } = ui
-  const choice = (key: string, label: string, isOn: boolean, change: Partial<PulsePrefs>, swatch: string[] = []) => (
+  const choice = (key: string, label: string, isOn: boolean, change: Partial<CubePrefs>, swatch: string[] = []) => (
     <Button key={key} plain onPress={() => savePrefs($, change)}>
       {swatch.map(c => (
         <Text color={c}>█</Text>
@@ -722,7 +761,7 @@ function Settings(ui: UI, $: Dollar, p: PulsePrefs) {
   )
   const row = (title: string, items: any[]) => (
     <Box marginTop={1} gap={1} flexWrap="wrap">
-      <Text bold>{title.padEnd(7)}</Text>
+      <Text bold>{title.padEnd(9)}</Text>
       {items}
     </Box>
   )
@@ -740,6 +779,10 @@ function Settings(ui: UI, $: Dollar, p: PulsePrefs) {
         choice('mascot-owl', 'owl', p.owl && p.mascot !== 'cubeman', { owl: true, mascot: 'owl' }),
         choice('mascot-cubeman', 'cubeman', p.owl && p.mascot === 'cubeman', { owl: true, mascot: 'cubeman' }),
         choice('mascot-off', 'off', !p.owl, { owl: false }),
+      ])}
+      {row('ANIMATION', [
+        choice('anim-classic', 'classic', p.animation === 'classic', { animation: 'classic', owl: true, mascot: 'cubeman' }),
+        choice('anim-arbitrage', 'arbitrage', p.animation === 'arbitrage', { animation: 'arbitrage', owl: true, mascot: 'cubeman' }),
       ])}
       {row('OWL', [
         ...OWL_COLORWAYS.map(c => {
@@ -769,7 +812,7 @@ function Settings(ui: UI, $: Dollar, p: PulsePrefs) {
       ])}
       <Box marginTop={1}>
         <Text color={P.muted}>
-          auto: Catppuccin Mocha, or your /skin when the skins mod is installed · terminal: your terminal's own colours · press o by the owl to cycle its colours
+          auto: Catppuccin Mocha, or your /skin when the skins mod is installed · terminal: your terminal's own colours · arbitrage: Cubeman in a bandana, a random gun each prompt, waves of viruses and zombies · press o by the owl to cycle its colours
         </Text>
       </Box>
     </Box>
@@ -777,11 +820,11 @@ function Settings(ui: UI, $: Dollar, p: PulsePrefs) {
 }
 
 /** Five tabs on one line: each takes `n: ` for its hotkey, its label and a pill's four cells. */
-function Nav(ui: UI, $: Dollar, v: PulseView, W: number) {
+function Nav(ui: UI, $: Dollar, v: CubeView, W: number) {
   const { Box, Button } = ui
-  const go = (to: PulseView) => () => update($, view, () => to)
+  const go = (to: CubeView) => () => update($, view, () => to)
   const labels = W >= 68 ? ['Overview', 'Tools', 'Plans', 'Timeline', '⚙'] : ['Main', 'Tools', 'Plan', 'Log', '⚙']
-  const tab = (key: string, to: PulseView, label: string, hotkey: string) => (
+  const tab = (key: string, to: CubeView, label: string, hotkey: string) => (
     <Button key={key} plain hotkey={hotkey} onPress={go(to)}>
       {v === to ? pill(ui, label, P.accent) : pill(ui, label, P.surface, P.fg)}
     </Button>
@@ -797,7 +840,7 @@ function Nav(ui: UI, $: Dollar, v: PulseView, W: number) {
   )
 }
 
-function Gauges(ui: UI, s: PulseStats, W: number) {
+function Gauges(ui: UI, s: CubeStats, W: number) {
   const { Box, Text } = ui
   const mw = Math.max(10, Math.min(24, W - 36))
   const t = s.tokens
@@ -878,7 +921,7 @@ function Gauges(ui: UI, s: PulseStats, W: number) {
   )
 }
 
-function Running(ui: UI, s: PulseStats, W: number) {
+function Running(ui: UI, s: CubeStats, W: number) {
   const { Box, Text } = ui
   if (s.running.length === 0 && s.liveAgents.length === 0) return ''
   const frame = SPINNER[Math.floor(s.now / TICK_MS) % SPINNER.length]
@@ -907,7 +950,7 @@ function Running(ui: UI, s: PulseStats, W: number) {
   )
 }
 
-function Skills(ui: UI, s: PulseStats, W: number) {
+function Skills(ui: UI, s: CubeStats, W: number) {
   const { Box, Text } = ui
   const rows = Object.entries(s.skills).sort((a, b) => b[1].lastAt - a[1].lastAt)
   const latest = rows[0]?.[0]
@@ -931,7 +974,7 @@ function Skills(ui: UI, s: PulseStats, W: number) {
   )
 }
 
-function Tools(ui: UI, s: PulseStats, W: number, limit: number) {
+function Tools(ui: UI, s: CubeStats, W: number, limit: number) {
   const { Box, Text } = ui
   const rows = Object.entries(s.tools).sort((a, b) => b[1].count - a[1].count)
   const total = rows.reduce((n, [, t]) => n + t.count, 0)
@@ -959,7 +1002,7 @@ function Tools(ui: UI, s: PulseStats, W: number, limit: number) {
   )
 }
 
-function Agents(ui: UI, s: PulseStats, W: number) {
+function Agents(ui: UI, s: CubeStats, W: number) {
   const { Box, Text } = ui
   const rows = Object.entries(s.agents).sort((a, b) => b[1] - a[1])
   if (rows.length === 0) return ''
@@ -981,7 +1024,7 @@ function Agents(ui: UI, s: PulseStats, W: number) {
   )
 }
 
-function Files(ui: UI, s: PulseStats, W: number) {
+function Files(ui: UI, s: CubeStats, W: number) {
   const { Box, Text } = ui
   const rows = Object.entries(s.files).sort((a, b) => b[1].reads + b[1].edits - (a[1].reads + a[1].edits))
   if (rows.length === 0) return ''
@@ -1001,7 +1044,7 @@ function Files(ui: UI, s: PulseStats, W: number) {
   )
 }
 
-function Insights(ui: UI, s: PulseStats) {
+function Insights(ui: UI, s: CubeStats) {
   const { Box, Text } = ui
   const tools = Object.entries(s.tools)
   if (tools.length === 0) return ''
@@ -1031,7 +1074,7 @@ function Insights(ui: UI, s: PulseStats) {
  * The phases as one breadcrumb bar: done green, the running one lavender, the rest dim. Each
  * carries its first two words when they all fit, its number alone otherwise; never a cut word.
  */
-function Stepper(ui: UI, phases: PulsePhase[], frame: string, W: number) {
+function Stepper(ui: UI, phases: CubePhase[], frame: string, W: number) {
   const { Text } = ui
   const build = (isNamed: boolean): Seg[] =>
     phases.map((p, i) => {
@@ -1053,7 +1096,7 @@ function Stepper(ui: UI, phases: PulsePhase[], frame: string, W: number) {
 }
 
 /** The plan: on the overview its bar and buttons, on the Plans tab every phase with what it changed and the checks. */
-function Plan(ui: UI, $: Dollar, s: PulseStats, W: number, isFull: boolean) {
+function Plan(ui: UI, $: Dollar, s: CubeStats, W: number, isFull: boolean) {
   const { Box, Text, Button } = ui
   const plan = s.plan
   if (!plan) {
@@ -1157,7 +1200,7 @@ function Plan(ui: UI, $: Dollar, s: PulseStats, W: number, isFull: boolean) {
 }
 
 /** Past plans, newest first: how each ended, how long it ran, what it cost and whether its checks passed. */
-function History(ui: UI, s: PulseStats, W: number) {
+function History(ui: UI, s: CubeStats, W: number) {
   const { Box, Text } = ui
   const nw = Math.max(12, Math.min(40, W - 44))
   return (
@@ -1186,7 +1229,7 @@ function History(ui: UI, s: PulseStats, W: number) {
 /** What each glyph and colour means, along the foot of the pane. */
 function Legend(ui: UI) {
   const { Box, Text } = ui
-  const keys: [PulseEventKind, string][] = [
+  const keys: [CubeEventKind, string][] = [
     ['skill', 'skill'],
     ['tool', 'tool'],
     ['agent', 'subagent'],
@@ -1213,7 +1256,7 @@ function Legend(ui: UI) {
   )
 }
 
-function Timeline(ui: UI, s: PulseStats, rows: number) {
+function Timeline(ui: UI, s: CubeStats, rows: number) {
   const { Box, Text } = ui
   const list = s.timeline.slice(-Math.max(5, rows)).reverse()
   return (
@@ -1231,12 +1274,12 @@ function Timeline(ui: UI, s: PulseStats, rows: number) {
   )
 }
 
-function report(s: PulseStats): string {
+function report(s: CubeStats): string {
   const tools = Object.entries(s.tools).sort((a, b) => b[1].count - a[1].count)
   const skills = Object.entries(s.skills).sort((a, b) => b[1].count - a[1].count)
   const total = tools.reduce((n, [, t]) => n + t.count, 0)
   const lines = [
-    `Pulse report — up ${dur(s.now - s.startedAt)}, ${s.turns} turns, ${total} tool calls` +
+    `Cubeman report — up ${dur(s.now - s.startedAt)}, ${s.turns} turns, ${total} tool calls` +
       (s.costUsd !== undefined ? `, $${(s.costUsd - s.costBase).toFixed(2)} today` : '') +
       (s.contextPercent !== undefined ? `, context ${s.contextPercent}%` : ''),
     '',
@@ -1260,39 +1303,40 @@ export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
-      name: 'pulse',
+      name: 'cubeman',
       description: 'Live monitor of skills, tools, subagents, plan phases, context and tokens',
-      argumentHint: '[reset | report | style powerline|rounded|plain | mascot owl|cubeman|off | owl night|barn|snowy|lilac|off]',
+      argumentHint: '[reset | report | style powerline|rounded|plain | mascot owl|cubeman|off | animation classic|arbitrage | owl night|barn|snowy|lilac|off]',
     })
     try {
-      const saved = (await $.store.get('prefs')) as Partial<PulsePrefs> | undefined
+      const saved = (await $.store.get('prefs')) as Partial<CubePrefs> | undefined
       if (saved) await update($, prefs, () => ({ ...DEFAULT_PREFS, ...saved }))
     } catch {}
     await $.tool.register({ name: 'plan', description: PLAN_TOOL_DESCRIPTION, inputSchema: PLAN_SCHEMA, isDeferred: false })
     const now = await $.clock.now()
     let allTime: Record<string, number> = {}
-    let history: PulsePlan[] = []
+    let history: CubePlan[] = []
     try {
       allTime = ((await $.store.get('allTimeSkills')) ?? {}) as Record<string, number>
-      history = ((await $.store.get('history')) ?? []) as PulsePlan[]
+      history = ((await $.store.get('history')) ?? []) as CubePlan[]
     } catch {}
     // A value kept from an older version lacks the newer fields: fill them in.
     await update($, stats, s => (s.startedAt === 0 ? { ...fresh(now), allTimeSkills: allTime, history } : roll({ ...fresh(now), ...s, history: s.history ?? history }, now)))
 
-    // While the mascot has something to act out, every FRAME_MS (owl) or CUBE_FRAME_MS (Cubeman); every TICK_MS otherwise.
+    // While the mascot has something to act out, every FRAME_MS (owl), CUBE_FRAME_MS (classic Cubeman) or
+    // ARBITRAGE_FRAME_MS (Arbitrage); every TICK_MS otherwise.
     let lastDrawAt = 0
     let lastUsageAt = 0
     let lastStatus = ''
-    // Half a tick of slack: the time is read after an await, so 499 ms must still count as 500.
-    const isDue = (t: number, interval: number) => t - lastDrawAt >= interval - CUBE_FRAME_MS / 2
-    $.clock.every(CUBE_FRAME_MS, () => {
+    // Half a wake of slack: the time is read after an await, so 499 ms must still count as 500.
+    const isDue = (t: number, interval: number) => t - lastDrawAt >= interval - WAKE_MS / 2
+    const frameMs = (p: CubePrefs) => (!p.owl || p.mascot !== 'cubeman' ? FRAME_MS : p.animation === 'arbitrage' ? ARBITRAGE_FRAME_MS : CUBE_FRAME_MS)
+    $.clock.every(WAKE_MS, () => {
       void (async () => {
         const t = await $.clock.now()
         // Cheapest test first: the slow idle redraw needs no state at all; faster ones only while lively.
         if (!isDue(t, TICK_MS)) {
-          if (!isDue(t, CUBE_FRAME_MS) || !isLively(await read($, stats))) return
-          const p = await read($, prefs)
-          if (!isDue(t, p.owl && p.mascot === 'cubeman' ? CUBE_FRAME_MS : FRAME_MS)) return
+          if (!isDue(t, ARBITRAGE_FRAME_MS) || !isLively(await read($, stats))) return
+          if (!isDue(t, frameMs(await read($, prefs)))) return
         }
         lastDrawAt = t
         const s = await update($, stats, prev => roll(prev, t))
@@ -1316,50 +1360,61 @@ export const register: Register = on => {
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
     if (!(await read($, prefs)).planFlow) return composed
-    return { sections: [...composed.sections, { id: 'skill-pulse-plan', text: PLAN_RULE, scope: 'session' }] }
+    return { sections: [...composed.sections, { id: 'cubeman-plan', text: PLAN_RULE, scope: 'session' }] }
   })
 
-  on('command.run', { command: 'pulse' }, async ($, e) => {
+  on('command.run', { command: 'cubeman' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase()
     if (arg === 'reset') {
       await update($, stats, s => ({ ...newDay(s, s.now), timeline: [] }))
-      return { text: 'Pulse counters reset.' }
+      return { text: 'Cubeman counters reset.' }
     }
     if (arg === 'report') return { text: report(await read($, stats)) }
     const [word, value] = arg.split(/\s+/)
-    if (word === 'style' || word === 'owl' || word === 'mascot') {
+    if (word === 'style' || word === 'owl' || word === 'mascot' || word === 'animation') {
       const current = await read($, prefs)
       const colorway = OWL_COLORWAYS.find(c => c === value)
-      let change: Partial<PulsePrefs> | undefined
+      let change: Partial<CubePrefs> | undefined
       if (word === 'style' && (value === 'powerline' || value === 'rounded' || value === 'plain')) change = { style: value }
       if (word === 'owl' && value === 'on') change = { owl: true, mascot: 'owl' }
       if (word === 'owl' && value === 'off') change = { owl: false }
       if (word === 'owl' && colorway) change = { owl: true, owlColor: colorway, mascot: 'owl' }
-      if (word === 'mascot' && (value === 'owl' || value === 'cubeman')) change = { owl: true, mascot: value as PulseMascot }
+      if (word === 'mascot' && (value === 'owl' || value === 'cubeman')) change = { owl: true, mascot: value as CubeMascot }
       if (word === 'mascot' && value === 'off') change = { owl: false }
+      if (word === 'animation' && (value === 'classic' || value === 'arbitrage')) change = { animation: value, owl: true, mascot: 'cubeman' }
       if (!change) {
         return {
           text:
             word === 'style'
-              ? `Style is ${current.style}. Use /pulse style powerline, rounded or plain — or the ⚙ Settings tab.`
+              ? `Style is ${current.style}. Use /cubeman style powerline, rounded or plain — or the ⚙ Settings tab.`
+              : word === 'animation'
+                ? `The animation is ${current.animation}. Use /cubeman animation classic|arbitrage — or the ⚙ Settings tab.`
               : word === 'mascot'
-                ? `The mascot is ${current.owl ? current.mascot : 'off'}. Use /pulse mascot owl|cubeman|off — or the ⚙ Settings tab.`
-                : `The owl is ${current.owl ? current.owlColor : 'off'}. Use /pulse owl ${OWL_COLORWAYS.join('|')}|off — or the ⚙ Settings tab.`,
+                ? `The mascot is ${current.owl ? current.mascot : 'off'}. Use /cubeman mascot owl|cubeman|off — or the ⚙ Settings tab.`
+                : `The owl is ${current.owl ? current.owlColor : 'off'}. Use /cubeman owl ${OWL_COLORWAYS.join('|')}|off — or the ⚙ Settings tab.`,
         }
       }
       const chosen = await savePrefs($, change)
-      if (word === 'style') return { text: `Pulse style: ${chosen.style}.` }
-      if (word === 'mascot') return { text: chosen.owl ? `Pulse mascot: ${chosen.mascot}.` : 'Pulse mascot off.' }
-      return { text: chosen.owl ? `Pulse owl: ${chosen.owlColor} — hoo!` : 'Pulse owl off.' }
+      if (word === 'style') return { text: `Cubeman style: ${chosen.style}.` }
+      if (word === 'animation') return { text: `Cubeman animation: ${chosen.animation}.` }
+      if (word === 'mascot') return { text: chosen.owl ? `Cubeman mascot: ${chosen.mascot}.` : 'Cubeman mascot off.' }
+      return { text: chosen.owl ? `Cubeman owl: ${chosen.owlColor} — hoo!` : 'Cubeman owl off.' }
     }
     await $.ui.open({ id: PANE, title: TITLE })
-    return { text: 'Pulse monitor opened. Keys in the pane: 1 overview · 2 tools & files · 3 plans · 4 timeline · 5 settings · o owl colours · r reset · a approve plan.' }
+    return { text: 'Cubeman opened. Keys in the pane: 1 overview · 2 tools & files · 3 plans · 4 timeline · 5 settings · o owl colours · r reset · a approve plan.' }
   })
 
   // Each prompt resets the plan gate and drops a finished plan; an answer to a plan awaiting approval approves it, or marks it being revised.
   on('prompt.submit', async ($, e, next) => {
-    const isFinished = (plan: PulsePlan | undefined) => plan?.status === 'done' || plan?.status === 'cancelled'
-    const s = await update($, stats, prev => ({ ...prev, unplannedEdits: 0, nudged: false, plan: isFinished(prev.plan) ? undefined : prev.plan }))
+    const isFinished = (plan: CubePlan | undefined) => plan?.status === 'done' || plan?.status === 'cancelled'
+    // Each prompt is a new task with a fresh gun for Arbitrage, except an answer to a waiting plan: that keeps the gun it picked.
+    const s = await update($, stats, prev => ({
+      ...prev,
+      unplannedEdits: 0,
+      nudged: false,
+      plan: isFinished(prev.plan) ? undefined : prev.plan,
+      weapon: isOpen(prev.plan) && prev.weapon ? prev.weapon : pickWeapon(),
+    }))
     if (!isOpen(s.plan)) return next(e)
     const text = e.text.trim()
     const isApproval = text.length <= 40 && APPROVE.test(text) && !HEDGE.test(text)
@@ -1400,7 +1455,7 @@ export const register: Register = on => {
         const f = files[file] ?? { reads: 0, edits: 0 }
         files[file] = tool === 'Read' ? { ...f, reads: f.reads + 1 } : { ...f, edits: f.edits + 1 }
       }
-      const updated: PulseStats = {
+      const updated: CubeStats = {
         ...s,
         tools: { ...s.tools, [tool]: { ...t, count: t.count + 1, bySubagent: t.bySubagent + (isSubagent ? 1 : 0) } },
         activity,
@@ -1459,7 +1514,7 @@ export const register: Register = on => {
           }
           if (ranCheck) plan = { ...plan, checkedAt: end, isCheckOk: !isError }
         }
-        const updated: PulseStats = {
+        const updated: CubeStats = {
           ...s,
           plan,
           turnWork: s.turnWork + (!denied && !isError && (isEdit || isCommit(tool, args)) ? 1 : 0),
@@ -1490,7 +1545,7 @@ export const register: Register = on => {
       const isGated = (await read($, prefs)).planFlow
       await update($, stats, prev => {
         const st = roll(prev, now)
-        const proposed: PulsePlan = {
+        const proposed: CubePlan = {
           title,
           status: isGated ? 'awaiting' : 'executing',
           approvedAt: isGated ? undefined : now,
@@ -1504,13 +1559,13 @@ export const register: Register = on => {
       void $.ui.open({ id: PANE, title: TITLE }).catch(() => {})
       if (!isGated) {
         return {
-          result: `Plan "${title}" (${phases.length} phases) is recorded in the user's Pulse pane. The plan workflow is off, so go ahead: run the phases now, calling plan "start" and "done" for each.`,
+          result: `Plan "${title}" (${phases.length} phases) is recorded in the user's Cubeman pane. The plan workflow is off, so go ahead: run the phases now, calling plan "start" and "done" for each.`,
         }
       }
-      $.ui.toast('▤ Plan ready — reply "yes" or press a in the Pulse pane to approve')
+      $.ui.toast('▤ Plan ready — reply "yes" or press a in the Cubeman pane to approve')
       return {
         result:
-          `Plan "${title}" (${phases.length} phases) is shown in the user's Pulse pane and awaits approval. ` +
+          `Plan "${title}" (${phases.length} phases) is shown in the user's Cubeman pane and awaits approval. ` +
           'End your turn now: list the phases as a brief numbered list and ask "Approve this plan?". Do not edit files or start phase 1 until the user approves.',
       }
     }
@@ -1540,7 +1595,7 @@ export const register: Register = on => {
       const s2 = await update($, stats, prev => {
         if (!prev.plan) return prev
         const st = roll(prev, now)
-        const phases: PulsePhase[] =
+        const phases: CubePhase[] =
           action === 'start'
             ? startPhase(prev.plan.phases, n - 1, now)
             : prev.plan.phases.map((p, i) => (i === n - 1 ? { ...p, status: 'done', startedAt: p.startedAt ?? now, endedAt: now } : p))
@@ -1664,19 +1719,16 @@ export const register: Register = on => {
     const W = Math.max(36, e.props.bodyColumns)
     const bodyRows = e.props.scroll?.bodyRows ?? 30
     const isEmpty = s.timeline.length === 0
-    const showOwl = p.owl && Raster !== undefined && W >= 60
-    // The owl's column and the gap beside it.
-    const RW = showOwl ? W - OWL_BOX - 3 : W
+    const showMascot = p.owl && W >= 60
 
+    // The mascot has the top band to itself; the bar, the tabs and the gauges sit below it.
     return (
       <Box flexDirection="column" width={W}>
-        <Box flexDirection="row" gap={3}>
-          {showOwl && Raster ? Owl(ui, $, Raster, s, p) : ''}
-          <Box flexDirection="column" width={RW}>
-            {Header(ui, s, RW)}
-            {Nav(ui, $, v, RW)}
-            <Box marginTop={1}>{Gauges(ui, s, RW)}</Box>
-          </Box>
+        {showMascot && Raster ? Mascot(ui, $, Raster, s, p, W) : ''}
+        <Box flexDirection="column" width={W} marginTop={showMascot && Raster ? 1 : 0}>
+          {Header(ui, s, W)}
+          {Nav(ui, $, v, W)}
+          <Box marginTop={1}>{Gauges(ui, s, W)}</Box>
         </Box>
         <Text color={P.surface}>{'─'.repeat(W)}</Text>
         {v === 'overview' && (

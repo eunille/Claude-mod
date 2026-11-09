@@ -1,7 +1,7 @@
-// The Pulse owl: 14×14 pixels on a 16×16 canvas, drawn as 16×8 terminal cells, two pixels a cell (▀ / ▄),
+// The Cubeman pane's owl: 14×14 pixels on a 16×16 canvas, drawn as 16×8 terminal cells, two pixels a cell (▀ / ▄),
 // its eyes swapped per mood and its body moved per pose. Letters name colours; '.' is the terminal's own background.
 
-import type { PulseOwlColor } from '../types'
+import type { CubeOwlColor } from '../types'
 
 export type OwlMood = 'look' | 'glanceL' | 'glanceR' | 'blink' | 'sleepy' | 'sleep' | 'curious' | 'alarm' | 'happy'
 
@@ -20,13 +20,13 @@ export type OwlColors = {
   alarm: string
 }
 
-export const OWL_COLORWAYS: readonly PulseOwlColor[] = ['night', 'barn', 'snowy', 'lilac']
+export const OWL_COLORWAYS: readonly CubeOwlColor[] = ['night', 'barn', 'snowy', 'lilac']
 
 /**
  * Each colourway in Catppuccin, Mocha for a dark background and Latte for a light one: a dark
  * outline and wings, a mid-tone body, a light face and belly, and eyes that stand out.
  */
-export const OWLS: Record<PulseOwlColor, { dark: OwlColors; light: OwlColors }> = {
+export const OWLS: Record<CubeOwlColor, { dark: OwlColors; light: OwlColors }> = {
   // Slate grey with amber eyes: the classic owl.
   night: {
     dark: {

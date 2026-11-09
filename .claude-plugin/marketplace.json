@@ -1,12 +1,12 @@
 {
   "name": "eunille-mods",
   "owner": { "name": "eunille", "url": "https://github.com/eunille" },
-  "description": "Mods for Claude Code by eunille: skill-pulse, a live monitor pane with a plan-approval workflow.",
+  "description": "Mods for Claude Code by eunille: Cubeman, a live monitor pane with a pixel mascot and a plan-approval workflow.",
   "plugins": [
     {
-      "name": "skill-pulse",
+      "name": "cubeman",
       "source": "./",
-      "description": "Live Pulse pane: skills, tools, subagents, context, tokens, an owl mascot and a plan-first workflow."
+      "description": "Cubeman: a live pane of skills, tools, subagents, context and tokens, a pixel mascot (classic or Arbitrage) and a plan-first workflow."
     }
   ]
 }
