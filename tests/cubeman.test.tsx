@@ -138,8 +138,9 @@ test('the Settings tab and the owl button change colours and style', async ($, o
   expect(await ui.find({ type: 'Text', text: /● snowy/ })).toBeDefined()
   await ui.press({ key: 'style-rounded' })
   expect(await ui.find({ type: 'Text', text: /● rounded/ })).toBeDefined()
-  await ui.press({ key: 'owl-off' })
+  await ui.press({ key: 'mascot-off' })
   expect(await ui.find({ key: 'owl' })).toBeUndefined()
+  expect(await ui.find({ key: 'owl-snowy' })).toBeUndefined()
   expect((await $.command.run({ ...RUN, args: 'owl lilac' })).text).toContain('lilac')
   await ui.unmount()
 })
@@ -258,6 +259,32 @@ test('a second edit with no plan is turned back once, then goes through', async 
   await $.tool.call({ tool: PLAN, action: 'start', phase: 1 })
   expect((await edit()).deny).toBeUndefined()
   expect((await edit()).deny).toBeUndefined()
+
+  // The gate's nudges are held, not errors: no error count, no last error, and the plan tool reads as `plan`.
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /0 errors · 2 held by the plan gate/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /last error/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^ {2}plan / })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /cubeman__plan/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('empty SKILLS and PLAN fold into one line once someone knows them', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('skill.prompt', ($, e) => ({ text: e.text }))
+
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /Skills appear here/ })).toBeDefined()
+
+  // A skill once loaded, then the counters reset: no longer new, nothing this session.
+  await $.skill.prompt({ skill: 'dataviz', text: 'charts' })
+  await $.command.run({ ...RUN, args: 'reset' })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: /Skills appear here/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Multi-step tasks get a phased plan/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /✦ no skills yet {3}▤ no plan · press 3 for past plans/ })).toBeDefined()
+  await ui.unmount()
 })
 
 test('a finished plan stays until the next prompt, then clears', async ($, on) => {
@@ -275,7 +302,8 @@ test('a finished plan stays until the next prompt, then clears', async ($, on) =
   await $.prompt.submit({ text: 'something else', wait: false, origin: { kind: 'composer' } })
   await ui.redraw()
   expect(await ui.find({ type: 'Text', text: /done in/ })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /Multi-step tasks get a phased plan/ })).toBeDefined()
+  // With a plan in the history the empty PLAN folds into the one quiet line.
+  expect(await ui.find({ type: 'Text', text: /▤ no plan · press 3 for past plans/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -386,12 +414,12 @@ test('the mascot switches to Cubeman and back', async ($, on) => {
   expect(await ui.find({ key: 'owl' })).toBeDefined()
   expect(await ui.find({ key: 'cubeman' })).toBeUndefined()
 
-  // Picking an owl colour while Cubeman shows brings the owl back, in that colour.
+  // Each mascot's own row shows only while it does: OWL colours for the owl, ANIMATION for Cubeman.
+  expect(await ui.find({ key: 'owl-snowy' })).toBeDefined()
+  expect(await ui.find({ key: 'anim-arbitrage' })).toBeUndefined()
   await ui.press({ key: 'mascot-cubeman' })
-  expect(await ui.find({ type: 'Text', text: /● night/ })).toBeUndefined()
-  await ui.press({ key: 'owl-snowy' })
-  expect(await ui.find({ key: 'owl' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /● snowy/ })).toBeDefined()
+  expect(await ui.find({ key: 'owl-snowy' })).toBeUndefined()
+  expect(await ui.find({ key: 'anim-arbitrage' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -474,7 +502,7 @@ test('each prompt rolls Arbitrage a gun, and approving a plan keeps the one it p
   const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
   const gun = async () => {
     await ui.redraw()
-    return /working · (pistol|shotgun|blaster) · ✖ \d+/.exec((await ui.find({ type: 'Text', text: /working · / }))?.text ?? '')?.[1]
+    return /working · (zapper|shotgun|blaster)/.exec((await ui.find({ type: 'Text', text: /working · / }))?.text ?? '')?.[1]
   }
   const prompt = async (text: string, turnId: string) => {
     await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
@@ -484,6 +512,8 @@ test('each prompt rolls Arbitrage a gun, and approving a plan keeps the one it p
   await prompt('add pagination', 't1')
   const picked = await gun()
   expect(picked).toBeDefined()
+  // The HUD beside the caption counts the waves and kills.
+  expect(await ui.find({ type: 'Text', text: /WAVE \d+ · ✖ \d+ · BEST \d+/ })).toBeDefined()
   await $.tool.call({ tool: PLAN, action: 'propose', title: 'Pagination', phases: ['One', 'Two'] })
   await ui.redraw()
   expect(await ui.find({ type: 'Text', text: /picking a gun/ })).toBeDefined()
@@ -498,6 +528,43 @@ test('each prompt rolls Arbitrage a gun, and approving a plan keeps the one it p
   }
   expect(rolled.size).toBeGreaterThan(1)
   await ui.unmount()
+})
+
+test('idle, the redraw timer sleeps; Arbitrage at work on screen gets fast frames, and loses them off screen', async ($, on) => {
+  // Each wake of the timer writes the stats once (the clock moves on); nothing else writes them here.
+  let wakes = 0
+  on('state.set', { plugin: 'cubeman', key: 'stats' }, ($, e, next) => {
+    wakes++
+    return next(e)
+  })
+  const clock = mock.clock(on)
+  mock.store(on)
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  // The timer starts with the session: stand in for the engine's answers to what session.start asks.
+  on('command.register', () => ({ value: { command: 'cubeman' } }))
+  on('tool.register', () => ({ value: { tool: 'mcp__cubeman__plan' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const count = async (ms: number) => {
+    wakes = 0
+    await clock.advance(ms)
+    return wakes
+  }
+
+  const idle = await count(10_000)
+  expect(idle).toBeGreaterThanOrEqual(3)
+  expect(idle).toBeLessThanOrEqual(6)
+
+  await $.command.run({ ...RUN, args: 'animation arbitrage' })
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
+  await $.turn.start({ text: 'go', turnId: 't' })
+  await ui.redraw()
+  expect(await count(2_000)).toBeGreaterThanOrEqual(15)
+
+  await ui.unmount()
+  await clock.advance(1_500)
+  expect(await count(6_000)).toBeLessThanOrEqual(4)
 })
 
 test('an answer with changes keeps the plan waiting', async ($, on) => {

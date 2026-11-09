@@ -35,7 +35,7 @@ Then restart Claude Code. The command is now `/cubeman` and the plan tool is `mc
 - **Owl:** a pixel-art owl that acts out what Claude is doing. It bobs and flaps while working, twitches its ears when a plan is waiting for you, shakes with red eyes on an error, hops when a plan finishes, and sits still when idle, with a blink or an ear twitch now and then.
 - **Cubeman (default):** the Catalyx mascot, a white pixel cube with the logo marks on its side, in its own band across the top of the pane. Switch to the owl, or turn the mascot off, in ⚙ Settings → MASCOT or with `/cubeman mascot owl|cubeman|off`. Pick how it moves under ⚙ Settings → ANIMATION or with `/cubeman animation classic|arbitrage`:
   - **classic** (default): it hops while working, looks up with a `?` when a plan waits, shakes on an error, jumps and lands in a burst of colour when a plan finishes, and dozes when idle.
-  - **arbitrage**: a red bandana, parked at the right end of the band. Each prompt hands it a random gun (pistol, shotgun or blaster), and it holds fire until each wave of viruses and zombies walks up close, then shoots in bursts: tracers 3 then 2 from the pistol, a pumped 3-pellet spread from the shotgun, charged blue bolts from the blaster. While a plan waits, three guns pop up over its head and it picks the one for the task. An error flushes it red while it reloads; a finished task gets a jump with the gun spinning, two shots into the air, a wink and a smoking barrel, in confetti. Idle it stands guard; asleep, the bandana is a sleep mask.
+  - **arbitrage**: a red bandana, parked at the right end of the band. Each prompt hands it a random gun (zapper, shotgun or blaster), and it holds fire until each wave of one to three zombie cubes (Cubeman's green, red-eyed cousins, sliding in big and small) walks up close, then shoots in bursts: the zapper, an arcade light gun, locks a red reticle on 3 then 2 and zaps each zombie into a burst of stars, a pumped 3-pellet spread from the shotgun, charged blue bolts from the blaster. While a plan waits, three guns pop up over its head and it picks the one for the task. An error flushes it red while it reloads; a finished task gets a jump with the gun spinning, two shots into the air, a wink and a smoking barrel, in confetti. Idle it stands guard; asleep, the bandana is a sleep mask. The band has a floor, a moon and stars after 7 pm by your clock, and a HUD with the wave, the kills and your best (kept across sessions). Cubeman sweats when context passes 80%, and sweats harder past 90%.
 
   Its sprites come from [ctx-mascot](https://github.com/eunille/ctx-mascot) (`hooks/cubeman.ts` is generated there; don't edit it here).
 - **Gauges:** context window, 5h and 7d rate limits, tokens and cache hit rate, and an activity sparkline that warms as Claude gets busier.
@@ -66,8 +66,8 @@ Open the **⚙** tab (press `5`, or click it):
 |---|---|
 | Theme | auto · mocha · latte · terminal |
 | Mascot | owl · cubeman · off |
-| Animation | classic · arbitrage (Cubeman only) |
-| Owl | night · barn · snowy · lilac · off |
+| Animation | classic · arbitrage (shown while Cubeman is the mascot) |
+| Owl | night · barn · snowy · lilac (shown while the owl is the mascot) |
 | Style | powerline · rounded · plain |
 | Plan workflow | on · off |
 | Data | reset counters |

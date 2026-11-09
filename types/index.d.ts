@@ -1,4 +1,5 @@
-export type CubeToolStat = { count: number; errors: number; totalMs: number; maxMs: number; bySubagent: number }
+/** held: calls the plan gate turned back on purpose (waiting for approval, asking for a plan, asking for checks); never errors. */
+export type CubeToolStat = { count: number; errors: number; held?: number; totalMs: number; maxMs: number; bySubagent: number }
 export type CubeSkillStat = { count: number; lastAt: number }
 export type CubeFileStat = { reads: number; edits: number }
 export type CubeRunning = { id: string; tool: string; label: string; startedAt: number; isSubagent: boolean }
@@ -74,16 +75,18 @@ export type CubeStats = {
   lastSkill?: { name: string; at: number }
   /** Arbitrage's gun for the task at hand: rolled at each prompt, kept through a plan's approval. */
   weapon?: CubeWeapon
+  /** The most zombies Arbitrage has shot in one stretch of work, kept across sessions. */
+  bestKills?: number
 }
 
 /** powerline: chevron segments (Nerd Font); rounded: pills; plain: no special glyphs. */
 export type CubeStyle = 'powerline' | 'rounded' | 'plain'
 export type CubeOwlColor = 'night' | 'barn' | 'snowy' | 'lilac'
 export type CubeMascot = 'owl' | 'cubeman'
-/** How Cubeman moves. classic: hops and jumps; arbitrage: a bandana, a gun, and waves of viruses and zombies. */
+/** How Cubeman moves. classic: hops and jumps; arbitrage: a bandana, a gun, and waves of zombie cubes. */
 export type CubeAnimation = 'classic' | 'arbitrage'
 /** Arbitrage's gun, rolled per prompt. */
-export type CubeWeapon = 'pistol' | 'shotgun' | 'blaster'
+export type CubeWeapon = 'zapper' | 'shotgun' | 'blaster'
 /** auto: follow the skins mod's /skin when it is installed, Catppuccin Mocha when it is not. */
 export type CubeTheme = 'auto' | 'mocha' | 'latte' | 'terminal'
 /** planFlow: whether multi-step tasks wait for a plan's approval (the rule, the edit block). owl: whether a mascot shows at all. */

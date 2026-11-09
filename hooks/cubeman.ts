@@ -23,7 +23,7 @@ const BASE = {
   H: BRAND.white,
   K: '#F6A39B',
   // The Arbitrage style. N bandana shade, P the face flushed red on an error;
-  // guns: L outline, M body, m highlight, u/U wooden pump; V/v/C viruses and zombies;
+  // guns: L outline, M body, m highlight, u/U wooden pump; V/v/C the zombie cubes;
   // F/Q muzzle flash and tracers, c/b blaster bolts, g smoke.
   N: '#A8261C',
   P: '#F59A92',
@@ -195,7 +195,7 @@ const GRAVITY = 0.9
 const NEIGHBOURS: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]]
 
 /** A scattered, repeatable texture: about one pixel in `every`, with no lines or stripes. */
-const speckle = (x: number, y: number, every: number) => (((x * 73856093) ^ (y * 19349663)) >>> 0) % every === 0
+export const speckle = (x: number, y: number, every: number) => (((x * 73856093) ^ (y * 19349663)) >>> 0) % every === 0
 
 /** Depth of the lid and side, and the front face's edge, for a canvas of `size` pixels. */
 export function dims(size: number): { d: number; f: number } {
@@ -406,19 +406,19 @@ export function frameAt(mood: Mood, ms: number, size: number = WEB_SIZE, minFram
 
 /**
  * The Arbitrage style: the classic cube in a red bandana, parked at the right end of a wide band.
- * Working, it holds a gun and shoots down waves of viruses and zombies walking in from the left;
+ * Working, it holds a gun and shoots down waves of one to three zombie cubes sliding in from the left;
  * planning, three guns pop up over its head and it picks one; an error flushes it red while it reloads;
  * done, it jumps with the gun spinning, fires twice into the air and blows the smoke off the barrel.
  * Unlike the classic loops, a scene keeps state (enemies, bullets), so it is drawn by a stateful `arbitrage()`.
  */
 
-export type Weapon = 'pistol' | 'shotgun' | 'blaster'
-export const WEAPONS: readonly Weapon[] = ['pistol', 'shotgun', 'blaster']
+export type Weapon = 'zapper' | 'shotgun' | 'blaster'
+export const WEAPONS: readonly Weapon[] = ['zapper', 'shotgun', 'blaster']
 /** The band's height in pixels (12 terminal rows); its width is the caller's. */
 export const ARBITRAGE_HEIGHT = 24
 export const ARBITRAGE_MIN_WIDTH = 32
 
-export const pickWeapon = (rng: () => number = Math.random): Weapon => WEAPONS[Math.floor(rng() * WEAPONS.length)] ?? 'pistol'
+export const pickWeapon = (rng: () => number = Math.random): Weapon => WEAPONS[Math.floor(rng() * WEAPONS.length)] ?? 'zapper'
 
 type Rows = readonly string[]
 const H = ARBITRAGE_HEIGHT
@@ -434,15 +434,28 @@ const widthOf = (rows: Rows) => Math.max(...rows.map(r => r.length))
 
 // Guns face left: the muzzle at row 1, column 0; the grip at the right end, three columns in from the edge.
 // L outline, M body, m highlight, u/U wood.
-const PISTOL = ['.LLLLLLLL.', 'LmmmmmmMML', '.LLLLLMMML', '.....LMML.', '.....LMML.', '......LL..']
+/** A chunky arcade light gun: orange body, yellow trim, blue grip. */
+const ZAPPER = ['..LLLLLLLL..', 'LQFFFFFFFFL.', 'LYYYYYFFFFFL', '.LLLLLLFFBBL', '......LBBBL.', '......LBBL..', '.......LL...']
 const SHOTGUN = ['.LLLLLLLLLLLL..', 'LmmmmmmmmmmMMLL', '.LLLLuuuuLLMMML', '....LUUUUL.LMML', '.....LLLL..LMML', '............LL.']
 const BLASTER = ['...LLLLLLL.', '.LBBBBBBbBL', 'LcLbbbLBBBL', '.L..LLLBbBL', '......LBbL.', '.......LL..']
 const GUN_UP = ['.L.', 'LmL', 'LmL', 'LmL', 'LmML', 'LMMML', '.LMML', '..LL.']
 const GUN_DOWN = ['LLLLL.', 'LMMMML', '.LMmL.', '..LmL.', '..LmL.', '..LmL.', '...L..']
 const MAG = ['LL', 'Lm', 'LM', 'LL']
-const VIRUS = ['..v.v..', 'v.vVv.v', '.vVCVVv', 'vVEVEVv', '.vVVVVv', 'v.vVv.v', '..v.v..']
-const ZOMBIE = ['.vvvv...', 'vVCVVv..', 'vVVEVE..', 'vVVVRv..', '.vvvvvvvv', '.vLMMvVVv', '.vLMMv...', '.vLMMv...', '..v..v...', '.vv..vv..']
-const ZOMBIE_STEP = [...ZOMBIE.slice(0, -2), '.v..v....', 'vv..vv...']
+/**
+ * Cubeman's undead cousins: the same cube() turned round to face him, rotted green with a dark side,
+ * red-eyed, the logo's red square left as a wound, arms reaching out. Drawn once here, so a frame only
+ * copies them. They slide along the floor, big and small.
+ */
+const UNDEAD: Partial<Record<Key, Key>> = { W: 'V', G: 'V', T: 'C', S: 'v', D: 'v', Y: 'v', B: 'v', K: 'v', O: 'L', H: 'R' }
+function undead(f: number, d: number): string[] {
+  const rows = cube(f, f, d, pose(0, { mouth: 'open' })).map(row => row.map(k => UNDEAD[k] ?? k).reverse().join(''))
+  const arm = d + eyeRow(f) + 3
+  return rows.map((r, y) => r + (y === arm ? 'VVv' : y === arm + 1 ? 'vv.' : '...'))
+}
+const BIG = undead(9, 3)
+const SMALL = undead(7, 2)
+/** The most enemies one wave sends in. */
+const WAVE_MAX = 3
 const SNORE = ['OOOO', '..O.', '.O..', 'OOOO']
 const SNORE_SMALL = ['OO', '.O', 'OO']
 const BANG = ['RR', 'RR', 'RR', '..', 'RR']
@@ -459,23 +472,24 @@ type Gun = {
   gap: number
   pause: number
   range: number
-  shot: 'tracer' | 'pellet' | 'bolt'
+  /** zap: a hitscan light-gun shot, aimed with a reticle; pellet and bolt fly. */
+  shot: 'zap' | 'pellet' | 'bolt'
   shell?: Key
   pump?: boolean
   charge?: number
   flash: Rows
 }
 const GUNS: Record<Weapon, Gun> = {
-  pistol: {
-    sprite: PISTOL,
-    icon: ['LLLLL.', 'LmmMML', '.LLMML', '...LL.'],
+  zapper: {
+    sprite: ZAPPER,
+    icon: ['.LLLLL.', 'LFFFFFL', 'LYYYFBL', '...LBL.'],
     burst: [3, 2],
-    gap: 120,
-    pause: 520,
+    gap: 220,
+    pause: 600,
     range: 14,
-    shot: 'tracer',
-    shell: 'Y',
-    flash: ['..F.', '.FQY', 'FQQY', '.FQY', '..F.'],
+    shot: 'zap',
+    charge: 250,
+    flash: ['.Q.', 'QHQ', '.Q.'],
   },
   shotgun: {
     sprite: SHOTGUN,
@@ -546,22 +560,26 @@ const aim = (sprite: Rows, hand: { x: number; y: number }) => ({ x: hand.x - (wi
 
 // ── the scene's state ────────────────────────────────────────────────────────
 
-type Enemy = { zombie: boolean; at: number; y: number; sp: number }
+type Enemy = { isBig: boolean; at: number; sp: number }
 type Shot = { kind: Gun['shot']; at: number; x0: number; y0: number; vx: number; vy: number; life: number }
-type Pop = { x: number; y: number; at: number; blue: boolean }
+/** green: a zombie bursting; blue: a blaster hit; star: a zapper hit, in red, yellow and blue. */
+type Pop = { x: number; y: number; at: number; kind: 'green' | 'blue' | 'star' }
+type Zap = { at: number; x1: number }
 type Shell = { x0: number; y0: number; at: number; vx: number; k: Key }
 type Puff = { x0: number; y0: number; at: number }
 type Bit = { x: number; at: number; v: number; k: Key; wide: boolean }
 
 type Sim = {
-  queue: { at: number; zombie: boolean }[]
+  queue: { at: number; isBig: boolean }[]
   enemies: Enemy[]
   shots: Shot[]
   pops: Pop[]
   shells: Shell[]
+  zaps: Zap[]
   puffs: Puff[]
   confetti: Bit[]
   isWave: boolean
+  waves: number
   nextWave: number
   burstN: number
   left: number
@@ -582,9 +600,11 @@ const newSim = (): Sim => ({
   shots: [],
   pops: [],
   shells: [],
+  zaps: [],
   puffs: [],
   confetti: [],
   isWave: false,
+  waves: 0,
   nextWave: 600,
   burstN: 0,
   left: 0,
@@ -599,11 +619,15 @@ const newSim = (): Sim => ({
   prev: 0,
 })
 
-const enemyRows = (e: Enemy, t: number) => (e.zombie ? (Math.floor(t / 280) % 2 ? ZOMBIE_STEP : ZOMBIE) : VIRUS)
-const enemyW = (e: Enemy) => widthOf(e.zombie ? ZOMBIE : VIRUS)
-const enemyH = (e: Enemy) => (e.zombie ? ZOMBIE : VIRUS).length
-/** Enemies walk one pixel every `sp` ms from just off the left edge. */
+const enemyRows = (e: Enemy) => (e.isBig ? BIG : SMALL)
+const enemyW = (e: Enemy) => widthOf(enemyRows(e))
+const enemyH = (e: Enemy) => enemyRows(e).length
+/** Enemies slide one pixel every `sp` ms from just off the left edge, standing on the floor. */
 const enemyX = (e: Enemy, t: number) => -enemyW(e) + Math.floor((t - e.at) / e.sp)
+const enemyY = (e: Enemy) => H - 1 - enemyH(e)
+/** The enemy at the front of the wave, nearest the gun. */
+const frontmost = (enemies: Enemy[], t: number) =>
+  enemies.reduce<Enemy | undefined>((a, e) => (!a || enemyX(e, t) + enemyW(e) > enemyX(a, t) + enemyW(a) ? e : a), undefined)
 const shotX = (s: Shot, t: number) => s.x0 + s.vx * (t - s.at)
 const shotY = (s: Shot, t: number) => s.y0 + s.vy * (t - s.at)
 
@@ -612,7 +636,10 @@ function burstPops(g: Grid, pops: Pop[], t: number) {
     const s = 1 + Math.floor((t - p.at) / 90)
     if (s === 1) stamp(g, ['.H.', 'HQH', '.H.'], p.x - 1, p.y - 1)
     const rays: [number, number][] = [[s, 0], [-s, 0], [0, s], [0, -s], [s, -s], [-s, -s], [s, s], [-s, s]]
-    rays.forEach(([a, b], i) => put(g, p.x + a, p.y + b, p.blue ? (s > 2 ? 'b' : i % 2 ? 'c' : 'B') : s > 2 ? 'v' : i % 2 ? 'C' : 'V'))
+    const star: Key[] = ['R', 'Y', 'B', 'Q']
+    rays.forEach(([a, b], i) =>
+      put(g, p.x + a, p.y + b, p.kind === 'star' ? (star[(i + s) % 4] ?? 'Y') : p.kind === 'blue' ? (s > 2 ? 'b' : i % 2 ? 'c' : 'B') : s > 2 ? 'v' : i % 2 ? 'C' : 'V'),
+    )
   }
 }
 
@@ -649,20 +676,20 @@ function working(g: Grid, t: number, w: number, gun: Gun, sim: Sim, rng: () => n
   const muzzle = aim(gun.sprite, { x: home(w) + 1, y: HAND_Y })
   const mx = muzzle.x
   const gy = HAND_Y
-  // A wave: a pause, then 3-5 enemies a step apart; the next waits until this one is cleared.
+  // A wave: a pause, then 1 to WAVE_MAX enemies a step apart; the next waits until this one is cleared.
   if (!sim.isWave && t >= sim.nextWave) {
     sim.isWave = true
+    sim.waves++
     let at = t
-    const n = 3 + Math.floor(rng() * 3)
+    const n = 1 + Math.floor(rng() * WAVE_MAX)
     for (let i = 0; i < n; i++) {
-      sim.queue.push({ at, zombie: rng() < 0.5 })
-      at += 300 + rng() * 450
+      sim.queue.push({ at, isBig: rng() < 0.5 })
+      at += 700 + rng() * 500
     }
   }
   sim.queue = sim.queue.filter(q => {
     if (q.at > t) return true
-    const zombie = q.zombie
-    sim.enemies.push({ zombie, at: q.at, y: zombie ? H - 1 - ZOMBIE.length : gy - 3 - (rng() < 0.5 ? 2 : 0), sp: zombie ? 150 : 95 + rng() * 30 })
+    sim.enemies.push({ isBig: q.isBig, at: q.at, sp: q.isBig ? 160 : 135 })
     return false
   })
   // Hold fire until the front of the wave is within range, then shoot in bursts.
@@ -679,7 +706,16 @@ function working(g: Grid, t: number, w: number, gun: Gun, sim: Sim, rng: () => n
     sim.left--
     sim.nextShot += gun.gap
     if (sim.left === 0) sim.ready = at + gun.pause
-    if (gun.shot === 'pellet') for (const vy of [-0.006, 0, 0.006]) sim.shots.push({ kind: 'pellet', at, x0: mx - 1, y0: gy, vx: -0.04, vy, life: 500 })
+    if (gun.shot === 'zap') {
+      // A light gun: the shot lands where the reticle sat, on the front of the wave, the instant it fires.
+      const target = frontmost(sim.enemies, t)
+      if (target) {
+        sim.enemies.splice(sim.enemies.indexOf(target), 1)
+        sim.pops.push({ x: enemyX(target, t) + Math.floor(enemyW(target) / 2), y: enemyY(target) + Math.floor(enemyH(target) / 2), at, kind: 'star' })
+        sim.kills++
+      }
+      sim.zaps.push({ at, x1: target ? enemyX(target, t) + Math.floor(enemyW(target) / 2) : 0 })
+    } else if (gun.shot === 'pellet') for (const vy of [-0.006, 0, 0.006]) sim.shots.push({ kind: 'pellet', at, x0: mx - 1, y0: gy, vx: -0.04, vy, life: 500 })
     else sim.shots.push({ kind: gun.shot, at, x0: mx - 1, y0: gy, vx: gun.shot === 'bolt' ? -0.06 : -0.04, vy: 0, life: 4000 })
     if (gun.shell) sim.shells.push({ x0: mx + widthOf(gun.sprite) - 5, y0: gy - 1, at, vx: 0.5 + rng() * 0.3, k: gun.shell })
   }
@@ -691,18 +727,19 @@ function working(g: Grid, t: number, w: number, gun: Gun, sim: Sim, rng: () => n
     const y = Math.round(shotY(s, t))
     const hit = sim.enemies.find(e => {
       const ex = enemyX(e, t)
-      return y >= e.y && y < e.y + enemyH(e) && x <= ex + enemyW(e) - 1 && was >= ex - 1
+      const ey = enemyY(e)
+      return y >= ey && y < ey + enemyH(e) && x <= ex + enemyW(e) - 1 && was >= ex - 1
     })
     if (!hit) return x > -6
     sim.enemies.splice(sim.enemies.indexOf(hit), 1)
-    sim.pops.push({ x: enemyX(hit, t) + Math.floor(enemyW(hit) / 2), y: hit.y + Math.floor(enemyH(hit) / 2), at: t, blue: s.kind === 'bolt' })
+    sim.pops.push({ x: enemyX(hit, t) + Math.floor(enemyW(hit) / 2), y: enemyY(hit) + Math.floor(enemyH(hit) / 2), at: t, kind: s.kind === 'bolt' ? 'blue' : 'green' })
     sim.kills++
     return false
   })
   // One that reaches the muzzle bursts there.
   sim.enemies = sim.enemies.filter(e => {
     if (enemyX(e, t) + enemyW(e) < mx) return true
-    sim.pops.push({ x: enemyX(e, t) + 3, y: e.y + 3, at: t, blue: false })
+    sim.pops.push({ x: enemyX(e, t) + 3, y: enemyY(e) + 3, at: t, kind: 'green' })
     return false
   })
   // A cleared wave lets the burst in hand finish, so the 3-then-2 rhythm never breaks off mid-burst.
@@ -715,12 +752,28 @@ function working(g: Grid, t: number, w: number, gun: Gun, sim: Sim, rng: () => n
   const pumping = gun.pump && t - sim.fired > 140 && t - sim.fired < 320
   const charging = gun.charge !== undefined && sim.left > 0 && t < sim.nextShot && t - sim.chargeAt < gun.charge
   body(g, { x0: home(w), dx: recoil ? 1 : 0, mouth: sim.enemies.length ? 'flat' : 'smile', look: -1, flutter: Math.floor(t / 300) % 2 === 1 })
-  for (const e of sim.enemies) stamp(g, enemyRows(e, t), enemyX(e, t), e.y)
+  // The rear of the wave first, so the one in front is drawn over it.
+  for (const e of [...sim.enemies].reverse()) stamp(g, enemyRows(e), enemyX(e, t), enemyY(e))
   for (const s of sim.shots) {
     const x = Math.round(shotX(s, t))
     const y = shotY(s, t)
-    const trail: Key[] = s.kind === 'tracer' ? ['Q', 'Y', 'F'] : s.kind === 'pellet' ? ['Q', 'F'] : ['H', 'c', 'B', 'B', 'b']
+    const trail: Key[] = s.kind === 'pellet' ? ['Q', 'F'] : ['H', 'c', 'B', 'B', 'b']
     trail.forEach((k, i) => put(g, x + i, y, k))
+  }
+  // The zap beam flickers for a beat; between shots of a burst a red reticle closes in on the next target.
+  sim.zaps = sim.zaps.filter(z => t - z.at < 90)
+  for (const z of sim.zaps) for (let x = z.x1; x < mx; x++) put(g, x, gy, x % 2 ? 'H' : 'Q')
+  const aimAt = gun.shot === 'zap' && sim.left > 0 ? frontmost(sim.enemies, t) : undefined
+  if (aimAt) {
+    const cx = enemyX(aimAt, t) + Math.floor(enemyW(aimAt) / 2)
+    const cy = enemyY(aimAt) + Math.floor(enemyH(aimAt) / 2)
+    const r = 2 + Math.min(2, Math.max(0, Math.floor((sim.nextShot - t) / 70)))
+    for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+      put(g, cx + dx * r, cy + dy * r, 'R')
+      put(g, cx + dx * r - dx, cy + dy * r, 'R')
+      put(g, cx + dx * r, cy + dy * r - dy, 'R')
+    }
+    put(g, cx, cy, 'R')
   }
   sim.pops = sim.pops.filter(p => t - p.at < 350)
   burstPops(g, sim.pops, t)
@@ -732,7 +785,7 @@ function working(g: Grid, t: number, w: number, gun: Gun, sim: Sim, rng: () => n
   sim.shells = sim.shells.filter(s => shellAt(s).y < H - 1)
   for (const s of sim.shells) put(g, shellAt(s).x, shellAt(s).y, s.k)
   stamp(g, gun.sprite, mx + (pumping ? 1 : 0), muzzle.y)
-  if (charging && Math.floor(t / 60) % 2) stamp(g, ['.c.', 'cQc', '.c.'], mx - 2, gy - 1)
+  if (charging && gun.shot === 'bolt' && Math.floor(t / 60) % 2) stamp(g, ['.c.', 'cQc', '.c.'], mx - 2, gy - 1)
   if (recoil) stamp(g, gun.flash, mx - widthOf(gun.flash), gy - Math.floor(gun.flash.length / 2))
 }
 
@@ -850,6 +903,35 @@ function done(g: Grid, t: number, w: number, weapon: Weapon, sim: Sim, rng: () =
   else sim.confetti = []
 }
 
+// ── the stage and the sweat ─────────────────────────────────────────────────
+
+const MOON = ['.QQ', 'QQ.', 'QQ.', '.QQ']
+
+/** Drawn last and only into empty pixels: a dotted floor, and at night a crescent moon and twinkling stars. */
+function stage(g: Grid, t: number, w: number, isNight: boolean) {
+  for (let x = 0; x < w; x++) if (x % 3 !== 2) put(g, x, H - 1, 'L', false)
+  if (!isNight) return
+  stamp(g, MOON, 3, 1, false)
+  for (let y = 0; y < 10; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!speckle(x, y, 41)) continue
+      // About one star in five is bright, and which ones changes every 700 ms.
+      put(g, x, y, (x * 7 + y * 13 + Math.floor(t / 700)) % 5 === 0 ? 'H' : 'g', false)
+    }
+  }
+}
+
+/** Sweat running down the front of the standing cube: one drop when context is tight, two when it is nearly full. */
+function sweat(g: Grid, t: number, w: number, level: 1 | 2) {
+  const top = H - 1 - BODY + D + 1
+  const drops: [number, number][] = level === 1 ? [[home(w) + 2, 700]] : [[home(w) + 2, 450], [home(w) + F - 3, 380]]
+  for (const [x, period] of drops) {
+    const y = top + Math.floor(((t % period) / period) * 4)
+    put(g, x, y, 'c')
+    put(g, x, y + 1, 'B')
+  }
+}
+
 // ── the scene ────────────────────────────────────────────────────────────────
 
 export type ArbitrageInput = {
@@ -862,11 +944,17 @@ export type ArbitrageInput = {
   weapon: Weapon
   /** When this mood began, if the caller knows: the jump and the reload then start from their first frame. */
   since?: number
+  /** Night by the person's own clock: the moon and stars come out. */
+  isNight?: boolean
+  /** How tight the context is: 1 a drop of sweat, 2 two (from 80% and 90%, say). */
+  sweat?: 0 | 1 | 2
 }
 export type ArbitrageFrame = {
   grid: Grid
   /** Enemies shot down since this stretch of work began. */
   kills: number
+  /** Waves sent in since this stretch of work began. */
+  waves: number
   /** Shots fired since this stretch of work began. */
   shots: number
 }
@@ -880,9 +968,9 @@ export function arbitrage(rng: () => number = Math.random): Arbitrage {
   let start = 0
   let sim = newSim()
   return {
-    draw({ mood, now, width, weapon, since }) {
+    draw({ mood, now, width, weapon, since, isNight = false, sweat: level = 0 }) {
       const w = Math.max(ARBITRAGE_MIN_WIDTH, Math.round(Number.isFinite(width) ? width : ARBITRAGE_MIN_WIDTH))
-      const gun: Weapon = WEAPONS.includes(weapon) ? weapon : 'pistol'
+      const gun: Weapon = WEAPONS.includes(weapon) ? weapon : 'zapper'
       const m: Mood = SCENE_MOODS.includes(mood) ? mood : 'idle'
       const clock = Number.isFinite(now) ? now : 0
       const next = `${m}:${gun}:${w}:${since ?? ''}`
@@ -900,8 +988,11 @@ export function arbitrage(rng: () => number = Math.random): Arbitrage {
       if (m === 'waiting') waiting(g, t, w, gun)
       if (m === 'error') error(g, t, w, gun)
       if (m === 'done') done(g, t, w, gun, sim, rng)
+      // Asleep or mid-jump there is no standing face to sweat down.
+      if (level && m !== 'sleep' && m !== 'done') sweat(g, t, w, level)
+      stage(g, t, w, isNight)
       sim.prev = t
-      return { grid: g, kills: sim.kills, shots: sim.shotsFired }
+      return { grid: g, kills: sim.kills, waves: sim.waves, shots: sim.shotsFired }
     },
   }
 }
