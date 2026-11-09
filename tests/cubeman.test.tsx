@@ -4,9 +4,9 @@ import { OWLS, owlCells, STILL } from '../hooks/owl'
 
 const PANE = {
   component: 'Pane',
-  requestId: 'skill-pulse',
+  requestId: 'cubeman',
   props: {
-    title: 'Pulse',
+    title: 'Cubeman',
     isFocused: true,
     bodyColumns: 100,
     placement: 'dock',
@@ -26,7 +26,7 @@ test('counts skills and tool calls and draws them on every surface', async ($, o
   await $.tool.call({ tool: 'Read', file_path: 'C:/repo/src/app/page.tsx' })
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'skill-pulse', surface, ...PANE })
+    const ui = await $.ui.mount({ plugin: 'cubeman', surface, ...PANE })
     expect(await ui.find({ type: 'Text', text: /dataviz/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /2 calls/ })).toBeDefined()
 
@@ -42,8 +42,8 @@ test('counts skills and tool calls and draws them on every surface', async ($, o
   }
 })
 
-const PLAN = 'mcp__skill-pulse__plan'
-const RUN = { command: 'pulse', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as const
+const PLAN = 'mcp__cubeman__plan'
+const RUN = { command: 'cubeman', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as const
 
 test('a plan waits for approval, then tracks its phases', async ($, on) => {
   mock.clock(on)
@@ -58,7 +58,7 @@ test('a plan waits for approval, then tracks its phases', async ($, on) => {
   const edit = await $.tool.call({ tool: 'Edit', file_path: 'C:/repo/a.ts', old_string: 'a', new_string: 'b' })
   expect(edit.deny).toBeDefined()
 
-  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
   expect(await ui.find({ type: 'Text', text: /awaiting your approval/ })).toBeDefined()
   expect(await ui.find({ key: 'plan-approve' })).toBeDefined()
 
@@ -87,7 +87,7 @@ test('Cubeman is the default mascot; the owl and the bars draw on the terminal, 
 
   await $.tool.call({ tool: PLAN, action: 'propose', title: 'Owl test', phases: ['One', 'Two', 'Three'] })
 
-  const term = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  const term = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
   expect(await term.find({ key: 'cubeman' })).toBeDefined()
   expect(await term.find({ key: 'owl' })).toBeUndefined()
   expect(await term.find({ type: 'Text', text: /\? approve/ })).toBeDefined()
@@ -96,15 +96,15 @@ test('Cubeman is the default mascot; the owl and the bars draw on the terminal, 
   await term.redraw()
   expect(await term.find({ key: 'owl' })).toBeDefined()
   expect(await term.find({ type: 'Text', text: /hoo\? approve/ })).toBeDefined()
-  expect(await term.find({ type: 'Text', text: /PULSE/ })).toBeDefined()
+  expect(await term.find({ type: 'Text', text: /CUBEMAN/ })).toBeDefined()
   expect(await term.find({ type: 'Text', text: /○ 1 One/ })).toBeDefined()
   expect(await term.find({ type: 'Text', text: /busier/ })).toBeDefined()
   await term.unmount()
 
-  const desk = await $.ui.mount({ plugin: 'skill-pulse', surface: 'desktop', ...PANE })
+  const desk = await $.ui.mount({ plugin: 'cubeman', surface: 'desktop', ...PANE })
   expect(await desk.find({ key: 'owl' })).toBeUndefined()
   expect(await desk.find({ key: 'cubeman' })).toBeUndefined()
-  expect(await desk.find({ type: 'Text', text: /PULSE/ })).toBeDefined()
+  expect(await desk.find({ type: 'Text', text: /CUBEMAN/ })).toBeDefined()
   await desk.unmount()
 })
 
@@ -116,7 +116,7 @@ test('style and owl commands change the drawing and are kept', async ($, on) => 
   expect((await $.command.run({ ...RUN, args: 'owl off' })).text).toContain('off')
   expect((await $.command.run({ ...RUN, args: 'style neon' })).text).toContain('Style is plain')
 
-  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
   expect(await ui.find({ key: 'owl' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: // })).toBeUndefined()
   await ui.unmount()
@@ -127,7 +127,7 @@ test('the Settings tab and the owl button change colours and style', async ($, o
   mock.store(on)
 
   await $.command.run({ ...RUN, args: 'mascot owl' })
-  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
   expect(await ui.find({ type: 'Text', text: /◂ night ▸/ })).toBeDefined()
   await ui.press({ key: 'owl-cycle' })
   expect(await ui.find({ type: 'Text', text: /◂ barn ▸/ })).toBeDefined()
@@ -151,7 +151,7 @@ test('pressing Approve in the pane approves the plan', async ($, on) => {
   on('prompt.submit', ($, e) => ({ text: e.text, context: e.context }))
 
   await $.tool.call({ tool: PLAN, action: 'propose', title: 'Button test', phases: ['One', 'Two'] })
-  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
   await ui.press({ key: 'plan-approve' })
   expect((await $.tool.call({ tool: PLAN, action: 'start', phase: 1 })).deny).toBeUndefined()
   await ui.unmount()
@@ -172,7 +172,7 @@ test('errors lose their tags and the stepper never cuts a word', async ($, on) =
     phases: ['Add owl colourways night barn snowy and lilac', 'Add a Settings tab with pill buttons', 'Make the caption a button', 'Update tests and validate'],
   })
 
-  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE, props: { ...PANE.props, bodyColumns: 70 } })
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE, props: { ...PANE.props, bodyColumns: 70 } })
   expect(await ui.find({ type: 'Text', text: /File has not been read yet/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /tool_use_error/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /○ 1 Add owl/ })).toBeDefined()
@@ -185,7 +185,7 @@ test('with the plan workflow off, a plan is tracked but nothing waits', async ($
   mock.store(on)
   on('tool.call', () => ({ result: { ok: true } }))
 
-  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
   await ui.press({ key: 'v-settings' })
   await ui.press({ key: 'plan-off' })
   expect(await ui.find({ type: 'Text', text: /● off/ })).toBeDefined()
@@ -204,7 +204,7 @@ test('bars are pixel-art segments with an icon cap, and NOW shows the last event
   await $.tool.call({ tool: 'Read', file_path: 'C:/repo/a.ts' })
   await $.tool.call({ tool: 'Bash', command: 'npm test' })
 
-  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
   expect(await ui.find({ type: 'Text', text: /^•$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /▰/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /NOW/ })).toBeDefined()
@@ -217,7 +217,7 @@ test('the theme row defaults to auto and switches palettes', async ($, on) => {
   mock.clock(on)
   mock.store(on)
 
-  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
   await ui.press({ key: 'v-settings' })
   expect(await ui.find({ type: 'Text', text: /● auto/ })).toBeDefined()
   await ui.press({ key: 'theme-latte' })
@@ -270,7 +270,7 @@ test('a finished plan stays until the next prompt, then clears', async ($, on) =
   await $.prompt.submit({ text: 'yes', wait: false, origin: { kind: 'composer' } })
   await $.tool.call({ tool: PLAN, action: 'done', phase: 1 })
 
-  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
   expect(await ui.find({ type: 'Text', text: /done in/ })).toBeDefined()
   await $.prompt.submit({ text: 'something else', wait: false, origin: { kind: 'composer' } })
   await ui.redraw()
@@ -291,7 +291,7 @@ test('finishing waits once for checks after the last change, and the Plans tab k
   await $.tool.call({ tool: PLAN, action: 'start', phase: 1 })
   await edit('C:/repo/src/a.ts')
 
-  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
   await ui.press({ key: 'v-plans' })
   expect(await ui.find({ type: 'Text', text: /src\/a\.ts/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /not run since the last change/ })).toBeDefined()
@@ -340,7 +340,7 @@ test('a skill loaded by the Skill tool shows in SKILLS, once even when skill.pro
 
   // The Skill tool alone, as in a live session where skill.prompt never arrives.
   await $.tool.call({ tool: 'Skill', skill: 'superpowers:brainstorming' })
-  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
   expect(await ui.find({ type: 'Text', text: /1 used this session/ })).toBeDefined()
 
   // When skill.prompt does follow for the same load, it isn't counted a second time.
@@ -374,7 +374,7 @@ test('the mascot switches to Cubeman and back', async ($, on) => {
   mock.clock(on)
   mock.store(on)
 
-  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
   await ui.press({ key: 'v-settings' })
   await ui.press({ key: 'mascot-cubeman' })
   expect(await ui.find({ key: 'cubeman' })).toBeDefined()
@@ -408,7 +408,7 @@ test('a turn that changed files ends with the done jump; a read-only turn does n
   }
 
   await turn('t1', () => $.tool.call({ tool: 'Read', file_path: 'C:/repo/a.ts' }))
-  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
   expect(await ui.find({ type: 'Text', text: /✓ done!/ })).toBeUndefined()
 
   await turn('t2', () => $.tool.call({ tool: 'Edit', file_path: 'C:/repo/a.ts', old_string: 'a', new_string: 'b' }))
@@ -432,10 +432,71 @@ test('counters start over at local midnight', async ($, on) => {
   await clock.advance(24 * 60 * 60 * 1000)
   await $.tool.call({ tool: 'Read', file_path: 'C:/repo/b.ts' })
 
-  const ui = await $.ui.mount({ plugin: 'skill-pulse', surface: 'terminal', ...PANE })
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
   expect(await ui.find({ type: 'Text', text: /1 calls/ })).toBeDefined()
   await ui.press({ key: 'v-timeline' })
   expect(await ui.find({ type: 'Text', text: /new day/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the ANIMATION row switches Cubeman between classic and Arbitrage, which spans the top band', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
+  expect(await ui.find({ key: 'cubeman' })).toBeDefined()
+  expect(await ui.find({ key: 'arbitrage' })).toBeUndefined()
+
+  await ui.press({ key: 'v-settings' })
+  await ui.press({ key: 'anim-arbitrage' })
+  const band = await ui.find({ key: 'arbitrage' })
+  expect(band?.props.columns).toBe(PANE.props.bodyColumns)
+  expect(await ui.find({ key: 'cubeman' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /● arbitrage/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /CUBEMAN/ })).toBeDefined()
+
+  await ui.press({ key: 'anim-classic' })
+  expect(await ui.find({ key: 'cubeman' })).toBeDefined()
+  expect(await ui.find({ key: 'arbitrage' })).toBeUndefined()
+  await ui.unmount()
+
+  expect((await $.command.run({ ...RUN, args: 'animation arbitrage' })).text).toContain('arbitrage')
+  expect((await $.command.run({ ...RUN, args: 'animation disco' })).text).toContain('The animation is arbitrage')
+})
+
+test('each prompt rolls Arbitrage a gun, and approving a plan keeps the one it picked', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  on('tool.call', () => ({ result: { ok: true } }))
+  on('prompt.submit', ($, e) => ({ text: e.text, context: e.context }))
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+  await $.command.run({ ...RUN, args: 'animation arbitrage' })
+  const ui = await $.ui.mount({ plugin: 'cubeman', surface: 'terminal', ...PANE })
+  const gun = async () => {
+    await ui.redraw()
+    return /working · (pistol|shotgun|blaster) · ✖ \d+/.exec((await ui.find({ type: 'Text', text: /working · / }))?.text ?? '')?.[1]
+  }
+  const prompt = async (text: string, turnId: string) => {
+    await $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+    await $.turn.start({ text, turnId })
+  }
+
+  await prompt('add pagination', 't1')
+  const picked = await gun()
+  expect(picked).toBeDefined()
+  await $.tool.call({ tool: PLAN, action: 'propose', title: 'Pagination', phases: ['One', 'Two'] })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: /picking a gun/ })).toBeDefined()
+  await prompt('yes', 't2')
+  expect(await gun()).toBe(picked)
+
+  // Fresh prompts roll fresh guns: twenty of them are not all the same.
+  const rolled = new Set<string | undefined>()
+  for (let i = 0; i < 20; i++) {
+    await prompt(`task ${i}`, `r${i}`)
+    rolled.add(await gun())
+  }
+  expect(rolled.size).toBeGreaterThan(1)
   await ui.unmount()
 })
 
