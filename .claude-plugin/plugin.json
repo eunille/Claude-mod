@@ -1,6 +1,6 @@
 {
   "name": "cubeman",
-  "version": "0.7.0",
+  "version": "0.8.2",
   "author": { "name": "eunille", "url": "https://github.com/eunille" },
   "description": "Cubeman for Claude Code: a live pane of skills, tools, subagents, context, tokens and activity, a pixel mascot that acts out what Claude is doing (classic, or Arbitrage with guns and zombie waves), and a plan-first workflow that waits for your approval.",
   "homepage": "https://github.com/eunille/Claude-mod",

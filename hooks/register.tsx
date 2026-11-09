@@ -30,8 +30,13 @@ const FRAME_MS = 500
 const CUBE_FRAME_MS = 150
 /** Arbitrage's bullets and waves move on a clock of their own: redraw this often while it is lively. */
 const ARBITRAGE_FRAME_MS = 100
-/** How often the redraw timer wakes; each wake costs one subtraction unless a redraw is due. */
-const WAKE_MS = 50
+/** Fast redraws stop once the mascot has gone undrawn this long: the pane was closed, hidden or made narrow. */
+const UNSEEN_MS = 1_000
+
+/** Brings the next redraw forward when the mascot has just found something to act out; set in session.start. */
+let wake: () => void = () => {}
+/** When the pane last drew the mascot, on the stats clock. */
+let mascotDrawnAt = Number.NEGATIVE_INFINITY
 const USAGE_EVERY_MS = 10_000
 const APPROVE = /^(y|yes|yep|yeah|ok|okay|sure|approve|approved|go|go ahead|proceed|continue|lgtm|ship it|do it|good|great|perfect|nice|sounds good|looks good)\b/i
 const HEDGE = /\b(but|change|instead|except|first|wait|no|not|don't|dont)\b/i
@@ -45,6 +50,9 @@ const NUDGE =
 const UNCHECKED =
   'Files changed after the last passing test, typecheck or lint run. Run the project\'s checks now, fix what fails, then mark this phase done. ' +
   'If this task has nothing to check (docs, config), repeat this call and it will go through.'
+
+/** The plan gate's own answers: a call turned back with one of these was held on purpose, not a failure. */
+const GATE_DENIALS = new Set([HELD, NUDGE, UNCHECKED])
 
 const PLAN_RULE = `# Plan-first workflow (cubeman)
 When the user asks for a task that takes several steps (a feature, a refactor, changes across files, a multi-step fix), follow this before changing anything. Skip it for questions, explanations, quick lookups and one-line edits. Subagents ignore this section.
@@ -302,6 +310,7 @@ function newDay(s: CubeStats, now: number): CubeStats {
   const keep = {
     allTimeSkills: s.allTimeSkills,
     history: s.history,
+    bestKills: s.bestKills,
     plan: s.plan,
     contextPercent: s.contextPercent,
     contextTokens: s.contextTokens,
@@ -584,6 +593,13 @@ const limitLabel = (kind: string) =>
     .replace(/_/g, ' ')
     .trim()
 
+/** A tool by a name that fits: the plan tool is `plan`, an MCP tool `server · tool`. */
+const toolName = (name: string) => {
+  if (name === PLAN_TOOL) return 'plan'
+  const [, server, ...rest] = name.split('__')
+  return name.startsWith('mcp__') && server && rest.length ? `${server.split('_').at(-1)} · ${rest.join('__')}` : name
+}
+
 const ago = (s: CubeStats, at: number) => (s.now - at < 5000 ? 'now' : `${dur(s.now - at)} ago`)
 const pctColor = (p: number) => (p >= 80 ? P.err : p >= 60 ? P.warn : P.ok)
 const clip = (t: string, w: number) => (t.length > w ? `${t.slice(0, Math.max(0, w - 1))}…` : t.padEnd(w))
@@ -689,22 +705,38 @@ type RasterElement = Elements['terminal']['Raster']
  * Cubeman pane open at once would share it; a reload starts it over, which only restarts the animation.
  */
 const scene = arbitrage()
+/** The kills in the scene's current stretch of work, for the timer to keep as the best (a render may not write state). */
+let sceneKills = 0
+
+/** Night by the person's own clock, for the Arbitrage sky. */
+const isNightAt = (at: number) => {
+  const hour = new Date(at).getHours()
+  return hour >= 19 || hour < 6
+}
 
 /** The mascot's own band across the top of the pane: Arbitrage spans it, the classic cube and the owl stand at its right end. */
 function Mascot(ui: UI, $: Dollar, Raster: RasterElement, s: CubeStats, p: CubePrefs, W: number) {
   const { Box, Text } = ui
   const m = owlMood(s)
   if (p.mascot === 'cubeman' && p.animation === 'arbitrage') {
-    const weapon = s.weapon ?? 'pistol'
+    const weapon = s.weapon ?? 'zapper'
     const since = m.cube === 'error' ? s.lastError?.at : m.since
-    const f = scene.draw({ mood: m.cube, now: s.now, width: W, weapon, since })
-    const caption = m.cube === 'working' ? `working · ${weapon} · ✖ ${f.kills}` : (ARBITRAGE_CAPTION[m.cube] ?? m.caption)
+    const ctx = s.contextPercent ?? 0
+    const sweat = ctx >= 90 ? 2 : ctx >= 80 ? 1 : 0
+    const f = scene.draw({ mood: m.cube, now: s.now, width: W, weapon, since, isNight: isNightAt(s.now), sweat })
+    sceneKills = f.kills
+    const best = Math.max(s.bestKills ?? 0, f.kills)
+    const hud = m.cube === 'working' ? `WAVE ${f.waves} · ✖ ${f.kills} · BEST ${best}` : best ? `BEST ${best}` : ''
+    const caption = m.cube === 'working' ? `working · ${weapon}` : (ARBITRAGE_CAPTION[m.cube] ?? m.caption)
     return (
       <Box flexDirection="column" width={W} marginTop={1}>
         <Raster key="arbitrage" columns={W} rows={ARBITRAGE_HEIGHT / 2} cells={toCells(f.grid, P.isLight ? CUBE_LIGHT : CUBE_DARK)} />
-        <Box justifyContent="flex-end" paddingRight={4}>
+        <Box justifyContent="space-between" paddingRight={4}>
+          <Text color={P.muted} wrap="truncate-end">
+            {hud}
+          </Text>
           <Text color={m.color} wrap="truncate-end">
-            {caption}
+            {sweat ? `${caption} · context ${ctx}%` : caption}
           </Text>
         </Box>
       </Box>
@@ -780,17 +812,22 @@ function Settings(ui: UI, $: Dollar, p: CubePrefs) {
         choice('mascot-cubeman', 'cubeman', p.owl && p.mascot === 'cubeman', { owl: true, mascot: 'cubeman' }),
         choice('mascot-off', 'off', !p.owl, { owl: false }),
       ])}
-      {row('ANIMATION', [
-        choice('anim-classic', 'classic', p.animation === 'classic', { animation: 'classic', owl: true, mascot: 'cubeman' }),
-        choice('anim-arbitrage', 'arbitrage', p.animation === 'arbitrage', { animation: 'arbitrage', owl: true, mascot: 'cubeman' }),
-      ])}
-      {row('OWL', [
-        ...OWL_COLORWAYS.map(c => {
-          const o = OWLS[c][tone]
-          return choice(`owl-${c}`, c, p.owl && p.mascot !== 'cubeman' && p.owlColor === c, { owl: true, owlColor: c, mascot: 'owl' }, [o.body, o.face, o.eye])
-        }),
-        choice('owl-off', 'off', !p.owl, { owl: false }),
-      ])}
+      {/* Each mascot's own row shows only while that mascot does. */}
+      {p.owl && p.mascot === 'cubeman'
+        ? row('ANIMATION', [
+            choice('anim-classic', 'classic', p.animation === 'classic', { animation: 'classic' }),
+            choice('anim-arbitrage', 'arbitrage', p.animation === 'arbitrage', { animation: 'arbitrage' }),
+          ])
+        : ''}
+      {p.owl && p.mascot === 'owl'
+        ? row(
+            'OWL',
+            OWL_COLORWAYS.map(c => {
+              const o = OWLS[c][tone]
+              return choice(`owl-${c}`, c, p.owlColor === c, { owlColor: c }, [o.body, o.face, o.eye])
+            }),
+          )
+        : ''}
       {row('STYLE', [
         choice('style-powerline', 'powerline', p.style === 'powerline', { style: 'powerline' }),
         choice('style-rounded', 'rounded', p.style === 'rounded', { style: 'rounded' }),
@@ -812,7 +849,7 @@ function Settings(ui: UI, $: Dollar, p: CubePrefs) {
       ])}
       <Box marginTop={1}>
         <Text color={P.muted}>
-          auto: Catppuccin Mocha, or your /skin when the skins mod is installed · terminal: your terminal's own colours · arbitrage: Cubeman in a bandana, a random gun each prompt, waves of viruses and zombies · press o by the owl to cycle its colours
+          auto: Catppuccin Mocha, or your /skin when the skins mod is installed · terminal: your terminal's own colours · arbitrage: Cubeman in a bandana, a random gun each prompt, waves of zombie cubes · press o by the owl to cycle its colours
         </Text>
       </Box>
     </Box>
@@ -858,7 +895,7 @@ function Gauges(ui: UI, s: CubeStats, W: number) {
         {running
           ? [
               <Text color={P.ok}>{`${frame} `}</Text>,
-              <Text bold>{running.tool}</Text>,
+              <Text bold>{toolName(running.tool)}</Text>,
               <Text color={P.muted}>{`${running.label ? `  ${running.label}` : ''} · ${dur(s.now - running.startedAt)}`}</Text>,
             ]
           : last
@@ -933,7 +970,7 @@ function Running(ui: UI, s: CubeStats, W: number) {
         return (
           <Text wrap="truncate-end">
             <Text color={P.ok}>{`  ${frame} `}</Text>
-            <Text bold>{clip(r.tool, 10)}</Text>
+            <Text bold>{clip(toolName(r.tool), 14)}</Text>
             <Text color={P.muted}>{` ${clip(r.label + (r.isSubagent ? '  (subagent)' : ''), Math.max(8, W - 24))} `}</Text>
             <Text color={el > 120_000 ? P.err : el > 30_000 ? P.warn : P.fg}>{dur(el).padStart(7)}</Text>
           </Text>
@@ -950,9 +987,26 @@ function Running(ui: UI, s: CubeStats, W: number) {
   )
 }
 
+/** Someone brand new: no skill ever counted and no plan ever kept. They get the empty sections' help text. */
+const isNewcomer = (s: CubeStats) => Object.keys(s.allTimeSkills).length === 0 && s.history.length === 0
+
+/** Empty SKILLS and PLAN, for someone who knows them, as one dim line instead of four. */
+function Quiet(ui: UI, s: CubeStats) {
+  const { Box, Text } = ui
+  if (isNewcomer(s)) return ''
+  const parts = [Object.keys(s.skills).length ? '' : '✦ no skills yet', s.plan ? '' : '▤ no plan · press 3 for past plans'].filter(Boolean)
+  if (!parts.length) return ''
+  return (
+    <Box marginTop={1}>
+      <Text color={P.muted}>{`  ${parts.join('   ')}`}</Text>
+    </Box>
+  )
+}
+
 function Skills(ui: UI, s: CubeStats, W: number) {
   const { Box, Text } = ui
   const rows = Object.entries(s.skills).sort((a, b) => b[1].lastAt - a[1].lastAt)
+  if (rows.length === 0 && !isNewcomer(s)) return ''
   const latest = rows[0]?.[0]
   const nw = Math.min(26, Math.max(8, ...rows.map(([n]) => n.length)))
   const max = Math.max(1, ...rows.map(([, v]) => v.count))
@@ -980,21 +1034,24 @@ function Tools(ui: UI, s: CubeStats, W: number, limit: number) {
   const total = rows.reduce((n, [, t]) => n + t.count, 0)
   const bySub = rows.reduce((n, [, t]) => n + t.bySubagent, 0)
   const errors = rows.reduce((n, [, t]) => n + t.errors, 0)
-  const nw = Math.min(22, Math.max(6, ...rows.map(([n]) => n.length)))
+  const held = rows.reduce((n, [, t]) => n + (t.held ?? 0), 0)
+  const nw = Math.min(22, Math.max(6, ...rows.map(([n]) => toolName(n).length)))
   const max = Math.max(1, ...rows.map(([, t]) => t.count))
   const bw = Math.max(4, Math.min(16, W - nw - 34))
-  const note = total ? `${total} calls · ${bySub} by subagents · ${errors} errors` : 'none yet'
+  const note = total ? `${total} calls · ${bySub} by subagents · ${errors} errors${held ? ` · ${held} held by the plan gate` : ''}` : 'none yet'
   return (
     <Box flexDirection="column" marginTop={1}>
       {Section(ui, 'TOOLS', note, P.tool)}
       {rows.length > 0 && <Text color={P.muted}>{`  ${''.padEnd(nw)} ${''.padEnd(bw + 2)} calls  err     avg     max`}</Text>}
       {rows.slice(0, limit).map(([name, t]) => (
         <Text wrap="truncate-end">
-          <Text>{`  ${clip(name.replace(/^mcp__/, ''), nw)} `}</Text>
+          <Text>{`  ${clip(toolName(name), nw)} `}</Text>
           {pix(ui, t.count, max, bw, P.tool, '•')}
           <Text bold>{` ${String(t.count).padStart(5)}`}</Text>
           <Text color={t.errors ? P.err : P.muted}>{` ${String(t.errors).padStart(4)}`}</Text>
-          <Text color={P.muted}>{` ${dur(t.count ? t.totalMs / t.count : 0).padStart(7)} ${dur(t.maxMs).padStart(7)}`}</Text>
+          <Text color={P.muted}>{` ${dur(t.count ? t.totalMs / t.count : 0).padStart(7)}`}</Text>
+          {/* The slowest call stands out once it is long enough to be felt. */}
+          <Text color={t.maxMs >= 120_000 ? P.err : t.maxMs >= 30_000 ? P.warn : P.muted}>{` ${dur(t.maxMs).padStart(7)}`}</Text>
         </Text>
       ))}
       {rows.length > limit && <Text color={P.muted}>{`  +${rows.length - limit} more · press 2 for all`}</Text>}
@@ -1057,13 +1114,18 @@ function Insights(ui: UI, s: CubeStats) {
     <Box flexDirection="column" marginTop={1}>
       {Section(ui, 'INSIGHTS', undefined, P.info)}
       <Text wrap="truncate-end" color={P.muted}>
-        {`  busiest ${busiest[0]} (${Math.round((busiest[1].count / total) * 100)}%) · slowest ${slowest[0]} ${dur(slowest[1].maxMs)} · error rate ${((errors / total) * 100).toFixed(1)}%`}
+        {`  busiest ${toolName(busiest[0])} (${Math.round((busiest[1].count / total) * 100)}%) · slowest ${toolName(slowest[0])} ${dur(slowest[1].maxMs)} · error rate ${((errors / total) * 100).toFixed(1)}%`}
       </Text>
       {s.lastError && (
-        <Text wrap="truncate-end">
-          <Text color={P.err}>{`  ✖ last error  ${s.lastError.tool}: `}</Text>
-          <Text color={P.muted}>{`${plainText(s.lastError.text)} · ${ago(s, s.lastError.at)}`}</Text>
-        </Text>
+        <Box flexDirection="column">
+          <Text wrap="truncate-end">
+            <Text color={P.err}>{`  ✖ last error · ${toolName(s.lastError.tool)}`}</Text>
+            <Text color={P.muted}>{` · ${ago(s, s.lastError.at)}`}</Text>
+          </Text>
+          <Box paddingLeft={4}>
+            <Text color={P.muted}>{plainText(s.lastError.text)}</Text>
+          </Box>
+        </Box>
       )}
     </Box>
   )
@@ -1099,6 +1161,7 @@ function Stepper(ui: UI, phases: CubePhase[], frame: string, W: number) {
 function Plan(ui: UI, $: Dollar, s: CubeStats, W: number, isFull: boolean) {
   const { Box, Text, Button } = ui
   const plan = s.plan
+  if (!plan && !isFull && !isNewcomer(s)) return ''
   if (!plan) {
     return (
       <Box flexDirection="column" marginTop={1}>
@@ -1315,31 +1378,48 @@ export const register: Register = on => {
     const now = await $.clock.now()
     let allTime: Record<string, number> = {}
     let history: CubePlan[] = []
+    let bestKills = 0
     try {
       allTime = ((await $.store.get('allTimeSkills')) ?? {}) as Record<string, number>
       history = ((await $.store.get('history')) ?? []) as CubePlan[]
+      bestKills = Number((await $.store.get('bestKills')) ?? 0) || 0
     } catch {}
     // A value kept from an older version lacks the newer fields: fill them in.
-    await update($, stats, s => (s.startedAt === 0 ? { ...fresh(now), allTimeSkills: allTime, history } : roll({ ...fresh(now), ...s, history: s.history ?? history }, now)))
+    await update($, stats, s =>
+      s.startedAt === 0
+        ? { ...fresh(now), allTimeSkills: allTime, history, bestKills }
+        : roll({ ...fresh(now), ...s, history: s.history ?? history, bestKills: Math.max(s.bestKills ?? 0, bestKills) }, now),
+    )
 
-    // While the mascot has something to act out, every FRAME_MS (owl), CUBE_FRAME_MS (classic Cubeman) or
-    // ARBITRAGE_FRAME_MS (Arbitrage); every TICK_MS otherwise.
-    let lastDrawAt = 0
+    // One timer, set for the redraw that is due next: the mascot's frame rate (FRAME_MS owl, CUBE_FRAME_MS
+    // classic, ARBITRAGE_FRAME_MS Arbitrage) while it acts something out in a pane that shows it, TICK_MS
+    // otherwise. Idle, that is one wake every two seconds instead of a poll many times a second; a render that
+    // finds new action calls wake() to start the fast frames at once.
     let lastUsageAt = 0
     let lastStatus = ''
-    // Half a wake of slack: the time is read after an await, so 499 ms must still count as 500.
-    const isDue = (t: number, interval: number) => t - lastDrawAt >= interval - WAKE_MS / 2
-    const frameMs = (p: CubePrefs) => (!p.owl || p.mascot !== 'cubeman' ? FRAME_MS : p.animation === 'arbitrage' ? ARBITRAGE_FRAME_MS : CUBE_FRAME_MS)
-    $.clock.every(WAKE_MS, () => {
-      void (async () => {
+    let savedBest = bestKills
+    let timer: { cancel: () => void } | undefined
+    let isFast = false
+    const frameMs = (p: CubePrefs) => (p.mascot !== 'cubeman' ? FRAME_MS : p.animation === 'arbitrage' ? ARBITRAGE_FRAME_MS : CUBE_FRAME_MS)
+    const schedule = (ms: number) => {
+      timer?.cancel()
+      timer = $.clock.after(ms, () => void tick())
+    }
+    const tick = async () => {
+      let ms = TICK_MS
+      try {
         const t = await $.clock.now()
-        // Cheapest test first: the slow idle redraw needs no state at all; faster ones only while lively.
-        if (!isDue(t, TICK_MS)) {
-          if (!isDue(t, ARBITRAGE_FRAME_MS) || !isLively(await read($, stats))) return
-          if (!isDue(t, frameMs(await read($, prefs)))) return
+        // A new best kill count from the Arbitrage scene is kept here and across sessions.
+        const s = await update($, stats, prev => {
+          const r = roll(prev, t)
+          return sceneKills > (r.bestKills ?? 0) ? { ...r, bestKills: sceneKills } : r
+        })
+        if ((s.bestKills ?? 0) > savedBest) {
+          savedBest = s.bestKills ?? 0
+          try {
+            await $.store.set('bestKills', savedBest)
+          } catch {}
         }
-        lastDrawAt = t
-        const s = await update($, stats, prev => roll(prev, t))
         const status = statusText(s)
         if (status !== lastStatus) {
           lastStatus = status
@@ -1349,8 +1429,20 @@ export const register: Register = on => {
           lastUsageAt = t
           await refreshUsage($)
         }
-      })().catch(() => {})
-    })
+        isFast = isLively(s) && t - mascotDrawnAt < UNSEEN_MS
+        if (isFast) ms = frameMs(await read($, prefs))
+      } catch {
+        isFast = false
+      } finally {
+        schedule(ms)
+      }
+    }
+    wake = () => {
+      if (isFast) return
+      isFast = true
+      schedule(ARBITRAGE_FRAME_MS)
+    }
+    schedule(TICK_MS)
     void refreshUsage($).catch(() => {})
     void $.ui.open({ id: PANE, title: TITLE }).catch(() => {})
 
@@ -1496,7 +1588,9 @@ export const register: Register = on => {
       const end = await $.clock.now()
       const ms = end - startedAt
       const denied = ran === undefined || typeof ran.deny === 'string'
-      const isError = denied || ran?.isError === true
+      // The plan gate's own holds are the workflow working, not a tool failing: counted apart, never an error.
+      const isHeld = typeof ran?.deny === 'string' && GATE_DENIALS.has(ran.deny)
+      const isError = !isHeld && (denied || ran?.isError === true)
       const why = ran === undefined ? 'interrupted' : typeof ran.deny === 'string' ? `denied: ${ran.deny}` : (ran.text ?? '')
       await update($, stats, prev => {
         const s = roll(prev, end)
@@ -1519,7 +1613,10 @@ export const register: Register = on => {
           plan,
           turnWork: s.turnWork + (!denied && !isError && (isEdit || isCommit(tool, args)) ? 1 : 0),
           running: s.running.filter(r => r.id !== e.tool_use_id),
-          tools: { ...s.tools, [tool]: { ...t, errors: t.errors + (isError ? 1 : 0), totalMs: t.totalMs + ms, maxMs: Math.max(t.maxMs, ms) } },
+          tools: {
+            ...s.tools,
+            [tool]: { ...t, errors: t.errors + (isError ? 1 : 0), held: (t.held ?? 0) + (isHeld ? 1 : 0), totalMs: t.totalMs + ms, maxMs: Math.max(t.maxMs, ms) },
+          },
         }
         if (!isError) return updated
         const text = plainText(why).split('\n').find(l => l.trim())?.trim().slice(0, 160) ?? 'error'
@@ -1720,6 +1817,11 @@ export const register: Register = on => {
     const bodyRows = e.props.scroll?.bodyRows ?? 30
     const isEmpty = s.timeline.length === 0
     const showMascot = p.owl && W >= 60
+    // A mascot on screen with something to act out wants its fast frames; one off screen wants none.
+    if (showMascot && Raster) {
+      mascotDrawnAt = s.now
+      if (isLively(s)) wake()
+    }
 
     // The mascot has the top band to itself; the bar, the tabs and the gauges sit below it.
     return (
@@ -1744,6 +1846,7 @@ export const register: Register = on => {
             {Agents(ui, s, W)}
             {Insights(ui, s)}
             {Plan(ui, $, s, W, false)}
+            {Quiet(ui, s)}
             {Legend(ui)}
           </Box>
         )}
